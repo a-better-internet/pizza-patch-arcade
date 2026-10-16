@@ -83,7 +83,7 @@ export class GlitchOracle extends Effect {
   }
 
   processWet(inL, inR, wetL, wetR) {
-    const p = this.p, sr = this.sr;
+    const sr = this.sr;
     const eng = this.engine;
     const bps = eng.bpm / 60 / sr;
     let beat = eng.beat;
@@ -167,6 +167,7 @@ export class GlitchOracle extends Effect {
           r = this.crushLp[1].process(this.hold[1]);
           break;
         }
+        case T_HALF:
         default: {
           const pos = g.cap - g.len + t * 0.5 * m;
           l = bl.readHermite(pos);

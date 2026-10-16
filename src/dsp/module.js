@@ -138,7 +138,7 @@ export class ModuleBase {
       this.fault++;
       try {
         this.reset();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
       this.clearOutputs();

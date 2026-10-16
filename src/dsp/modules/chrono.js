@@ -1,5 +1,5 @@
 import { Effect } from '../module.js';
-import { RecordBuffer, OnePole, sat, smoothCoef, HALF_PI, TAU, clamp } from '../util.js';
+import { RecordBuffer, OnePole, sat, HALF_PI, TAU, clamp } from '../util.js';
 import { GRAIN_DIVS, NOTE_DIVS, stepIndex } from '../../spec.js';
 
 class Grain {

@@ -64,7 +64,7 @@ class PatchArcadeProcessor extends AudioWorkletProcessor {
       if (this.errors++ < 5) this.port.postMessage({ type: 'error', message: String((err && err.stack) || err) });
       try {
         this.engine.panic();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -72,7 +72,7 @@ class PatchArcadeProcessor extends AudioWorkletProcessor {
       this.blockCount = 0;
       try {
         this.port.postMessage({ type: 'telemetry', t: this.engine.telemetry() });
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }

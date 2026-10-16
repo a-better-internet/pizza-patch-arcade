@@ -130,8 +130,8 @@ export class MasterChain {
     this.gateOpen = smoothCoef(0.004, sr);
     this.gateClose = smoothCoef(0.25, sr);
     // master volume
-    this.volume = dbToGain(-3);
-    this.volTarget = this.volume;
+    this.volume = 1;
+    this.volTarget = 1;
     this.volCoef = smoothCoef(0.03, sr);
     this.limiter = new LookaheadLimiter(sr);
     // telemetry
@@ -144,8 +144,8 @@ export class MasterChain {
   }
 
   setVolume(v01) {
-    // 0..1 knob -> -inf..+6 dB, 0.8 = -3 dB
-    this.volTarget = v01 <= 0.001 ? 0 : Math.pow(v01 / 0.8, 2.2) * dbToGain(-3);
+    // 0..1 knob -> -inf..+6 dB, 0.8 = 0 dB (the limiter still holds -1 dBFS)
+    this.volTarget = v01 <= 0.001 ? 0 : Math.pow(v01 / 0.8, 2.2);
     this.volTarget = Math.min(this.volTarget, dbToGain(6));
   }
 

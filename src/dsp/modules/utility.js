@@ -84,6 +84,7 @@ export class Mixer extends ModuleBase {
     super(engine, spec);
     this.peaks = new Float64Array(4);
     this.g0 = new Float64Array(6);
+    this.g1 = new Float64Array(6);
   }
   readMeters() {
     const out = Array.from(this.peaks);
@@ -97,7 +98,7 @@ export class Mixer extends ModuleBase {
     const [a12, b12] = xf(p.xf12);
     const [a23, b23] = xf(p.xf23);
     const ch = [faderGain(p.fader1) * a12, faderGain(p.fader2) * b12 * a23, faderGain(p.fader3) * b23];
-    const out = new Float64Array(6);
+    const out = this.g1;
     for (let i = 0; i < 3; i++) {
       const pan = p[`pan${i + 1}`];
       out[2 * i] = ch[i] * Math.min(1, Math.SQRT2 * Math.cos(pan * HALF_PI));
@@ -134,6 +135,7 @@ export class Mixer extends ModuleBase {
       if (a > pk) pk = a;
     }
     this.peaks[3] = pk;
+    this.g1 = this.g0;
     this.g0 = g1;
   }
 }
