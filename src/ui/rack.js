@@ -56,8 +56,12 @@ export function buildRack(root, model, handlers) {
   const prev = el('button', 'lcd-btn', lcdWrap, '◀');
   prev.type = 'button';
   prev.title = 'Previous factory patch';
-  const lcd = el('div', 'lcd', lcdWrap);
-  lcd.setAttribute('aria-live', 'polite');
+  const lcd = el('button', 'lcd', lcdWrap);
+  lcd.type = 'button';
+  lcd.setAttribute('aria-haspopup', 'menu');
+  lcd.setAttribute('aria-expanded', 'false');
+  lcd.setAttribute('aria-label', 'Factory patches');
+  lcd.addEventListener('click', () => handlers.onPresetMenu(lcd));
   const next = el('button', 'lcd-btn', lcdWrap, '▶');
   next.type = 'button';
   next.title = 'Next factory patch';

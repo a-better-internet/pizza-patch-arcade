@@ -234,8 +234,8 @@ class Beat extends Sequenced {
       r += s;
       h.t++;
     }
-    L[i] += l;
-    R[i] += r;
+    L[i] += l * 0.62;
+    R[i] += r * 0.62;
   }
 }
 
@@ -330,7 +330,7 @@ class Arp extends Sequenced {
     const k = this.order[step % 8];
     const m = ch.notes[k % ch.notes.length] + (step % 16 >= 8 ? 12 : 0);
     const v = this.voices[this.next++ % this.voices.length];
-    v.start(mtof(m), 1.1, this.rng, step % 2 ? 0.7 : 0.3);
+    v.start(mtof(m), 1.45, this.rng, step % 2 ? 0.7 : 0.3);
   }
   tick(L, R, i) {
     let l = 0, r = 0;

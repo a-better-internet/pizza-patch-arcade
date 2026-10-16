@@ -44,8 +44,10 @@ npm run test:e2e     # real-browser check of the live worklet output (needs Play
   another route's modules. The red ✕ clears the route.
 - **Loops:** a cable that closes a loop throws sparks. Every module inside a loop glows and
   "ages" over about 20 s, which changes how it behaves, as described in the manual.
-- **Patches:** use ◀ ▶ for the factory patches and the folder/disk icons to load or save `.json`.
-  The current patch autosaves in the browser.
+- **Patches:** click the purple patch display to browse 28 factory patches, grouped by
+  category (Starters, Ambient, Lo-fi, Rhythm, Sound Design, Feedback). Each patch sets its own
+  tempo and demo sources. ◀ ▶ step through them in order, and the folder/disk icons load or
+  save `.json`. The current patch autosaves in the browser.
 - **Solo:** the small square on each module shows only the cables touching that module.
 
 ## Signal integrity: no clipping, no hiss, no shrill highs
@@ -123,7 +125,7 @@ index.html                 dev entry (ES modules, no build step)
 src/spec.js                module/param/jack definitions shared by UI and engine
 src/graph.js               loop detection, processing order, cable ancestry (route colours)
 src/patch.js               patch model: patching rules, dice, (de)serialisation
-src/presets.js             factory patches
+src/presets.js             factory patches (each one is rendered and checked in tests/presets.test.mjs)
 src/dsp/worklet.js         AudioWorkletProcessor wrapper (never throws on the audio thread)
 src/dsp/engine.js          64-sample block router, feedback edges, loop governor, cable fades, host I/O
 src/dsp/master.js          output safety chain

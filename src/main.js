@@ -4,7 +4,7 @@ import { MODULES, MODULE_BY_ID, LFO_SYNC_DIVS, DRIFT_SYNC_DIVS, stepIndex, expMa
 import { PatchModel, ORIGIN_HAND } from './patch.js';
 import { Rng } from './dsp/util.js';
 import { PATTERNS } from './dsp/modules/pgate.js';
-import { PRESETS, applyPreset } from './presets.js';
+import { PRESETS, CATEGORIES, applyPreset } from './presets.js';
 import { buildRack } from './ui/rack.js';
 import { CableLayer } from './ui/cables.js';
 import { RACK_W } from './ui/layouts.js';
@@ -206,6 +206,7 @@ const handlers = {
     settings.presetIndex = (settings.presetIndex + dir + PRESETS.length) % PRESETS.length;
     loadPreset(PRESETS[settings.presetIndex]);
   },
+  onPresetMenu: (anchor) => openPresetMenu(anchor),
   onLoadFile: () => $('#patch-file').click(),
   onSaveFile: async () => {
     const json = JSON.stringify(model.toJSON(), null, 2);
@@ -235,16 +236,113 @@ const handlers = {
 
 function loadPreset(p) {
   applyPreset(model, p);
+  setTempo(p.bpm || 120);
   p.sources.forEach((s, h) => {
     hostSelects[h].value = s;
     applySource(h, s);
   });
-  toast(`Loaded “${p.name}”`);
+  toast(`Loaded “${p.name}” · ${p.bpm || 120} BPM`);
 }
 
 function refreshLcd() {
   ui.lcd.textContent = model.name || 'Untitled';
-  ui.lcd.title = model.name || '';
+  const preset = PRESETS.find((p) => p.name === model.name);
+  ui.lcd.title = preset ? `${preset.name}: ${preset.desc} (click for all patches)` : `${model.name || ''} (click for factory patches)`;
+}
+
+function setTempo(v) {
+  const n = Math.max(40, Math.min(240, Math.round(+v || 120)));
+  settings.bpm = n;
+  $('#bpm').value = String(n);
+  audio.send({ type: 'global', key: 'bpm', value: n });
+  persist();
+}
+
+// ----------------------------------------------------------- preset browser
+// A fixed overlay (not inside the scaled rack) so it reads at full size and
+// sits above the cable layer.
+let presetMenu = null;
+function closePresetMenu(focusLcd) {
+  if (!presetMenu) return;
+  presetMenu.remove();
+  presetMenu = null;
+  ui.lcd.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('pointerdown', menuOutside, true);
+  window.removeEventListener('resize', menuDismiss);
+  window.removeEventListener('scroll', menuDismiss, true);
+  if (focusLcd) ui.lcd.focus();
+}
+function menuOutside(e) {
+  if (presetMenu && !presetMenu.contains(e.target) && e.target !== ui.lcd) closePresetMenu(false);
+}
+function menuDismiss(e) {
+  if (e && e.type === 'scroll' && presetMenu && presetMenu.contains(e.target)) return;
+  closePresetMenu(false);
+}
+function openPresetMenu(anchor) {
+  if (presetMenu) {
+    closePresetMenu(true);
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.className = 'preset-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Factory patches');
+  const items = [];
+  for (const cat of CATEGORIES) {
+    const list = PRESETS.filter((p) => p.category === cat);
+    if (!list.length) continue;
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h3>${cat}</h3>`;
+    for (const p of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pm-item';
+      b.setAttribute('role', 'menuitem');
+      if (p.name === model.name) b.setAttribute('aria-current', 'true');
+      const name = document.createElement('b');
+      name.textContent = p.name;
+      const bpm = document.createElement('i');
+      bpm.textContent = `${p.bpm} bpm`;
+      const d = document.createElement('span');
+      d.textContent = p.desc;
+      b.append(name, bpm, d);
+      b.addEventListener('click', () => {
+        settings.presetIndex = PRESETS.indexOf(p);
+        closePresetMenu(true);
+        loadPreset(p);
+      });
+      sec.appendChild(b);
+      items.push(b);
+    }
+    menu.appendChild(sec);
+  }
+  menu.addEventListener('keydown', (e) => {
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closePresetMenu(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      items[(i + 1) % items.length].focus();
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      items[(i - 1 + items.length) % items.length].focus();
+    }
+  });
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  const left = Math.max(12, Math.min(window.innerWidth - w - 12, r.left));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.round(r.bottom + 6)}px`;
+  menu.style.maxHeight = `${Math.max(220, window.innerHeight - r.bottom - 20)}px`;
+  presetMenu = menu;
+  anchor.setAttribute('aria-expanded', 'true');
+  (items.find((b) => b.getAttribute('aria-current')) || items[0]).focus();
+  document.addEventListener('pointerdown', menuOutside, true);
+  window.addEventListener('resize', menuDismiss);
+  window.addEventListener('scroll', menuDismiss, true);
 }
 
 function refreshControls() {
@@ -389,13 +487,7 @@ function bindHostBar() {
   $('#power').addEventListener('click', power);
   const bpm = $('#bpm');
   bpm.value = String(settings.bpm);
-  const setBpm = (v) => {
-    const n = Math.max(40, Math.min(240, Math.round(+v || 120)));
-    settings.bpm = n;
-    bpm.value = String(n);
-    audio.send({ type: 'global', key: 'bpm', value: n });
-    persist();
-  };
+  const setBpm = setTempo;
   bpm.addEventListener('change', () => setBpm(bpm.value));
   $('#bpm-down').addEventListener('click', () => setBpm(settings.bpm - 1));
   $('#bpm-up').addEventListener('click', () => setBpm(settings.bpm + 1));
