@@ -40,12 +40,16 @@ export class ModuleBase {
     this.jacks = jacksFor(spec);
     this.in = {};
     this.inConnected = {};
+    this.inW = {}; // summed cable fade gain per input jack (0..1), this block
+    this.inWPrev = {}; // ... and the previous block
     this.cur = {};
     this.prev = {};
     for (const j of this.jacks) {
       if (j.dir === 'in') {
         this.in[j.id] = new Float32Array(BLOCK);
         this.inConnected[j.id] = false;
+        this.inW[j.id] = 0;
+        this.inWPrev[j.id] = 0;
       } else {
         this.cur[j.id] = new Float32Array(BLOCK);
         this.prev[j.id] = new Float32Array(BLOCK);
@@ -86,6 +90,42 @@ export class ModuleBase {
   }
 
   onButton() {}
+
+  // Read a stereo input pair with mono normalisation: a side with no cable
+  // takes the other side's signal. The copy is crossfaded with the cables'
+  // own fade gains, so patching or unpatching one side never clicks.
+  readPair(lId, rId, dL, dR, add = false) {
+    const L = this.in[lId], R = this.in[rId];
+    const wl0 = this.inWPrev[lId], wl1 = this.inW[lId], wr0 = this.inWPrev[rId], wr1 = this.inW[rId];
+    if (wl0 === 1 && wl1 === 1 && wr0 === 1 && wr1 === 1) {
+      if (add) {
+        for (let n = 0; n < BLOCK; n++) {
+          dL[n] += L[n];
+          dR[n] += R[n];
+        }
+      } else {
+        dL.set(L);
+        dR.set(R);
+      }
+      return;
+    }
+    const dl = (wl1 - wl0) / BLOCK, dr = (wr1 - wr0) / BLOCK;
+    for (let n = 0; n < BLOCK; n++) {
+      const cl = 1 - (wl0 + dl * n), cr = 1 - (wr0 + dr * n);
+      const l = L[n] + cl * R[n], r = R[n] + cr * L[n];
+      if (add) {
+        dL[n] += l;
+        dR[n] += r;
+      } else {
+        dL[n] = l;
+        dR[n] = r;
+      }
+    }
+  }
+
+  pairWeight(lId, rId) {
+    return Math.max(this.inW[lId], this.inW[rId]);
+  }
 
   // Called once per block by the engine, before process().
   updateParams() {
@@ -171,18 +211,8 @@ export class Effect extends ModuleBase {
   }
 
   gatherInput() {
-    const c = this.inConnected;
-    const i1L = this.in.in1L, i1R = this.in.in1R, i2L = this.in.in2L, i2R = this.in.in2R;
-    const a1L = c.in1L || !c.in1R ? i1L : i1R;
-    const a1R = c.in1R || !c.in1L ? i1R : i1L;
-    const a2L = c.in2L || !c.in2R ? i2L : i2R;
-    const a2R = c.in2R || !c.in2L ? i2R : i2L;
-    const useIn2 = this.in2IsInput !== false;
-    const L = this.inL, R = this.inR;
-    for (let n = 0; n < BLOCK; n++) {
-      L[n] = a1L[n] + (useIn2 ? a2L[n] : 0);
-      R[n] = a1R[n] + (useIn2 ? a2R[n] : 0);
-    }
+    this.readPair('in1L', 'in1R', this.inL, this.inR);
+    if (this.in2IsInput !== false) this.readPair('in2L', 'in2R', this.inL, this.inR, true);
   }
 
   process() {

@@ -28,6 +28,22 @@ function wrap(x) {
   return y;
 }
 
+// The transfer curve: zone crossfade (soft clip -> fold -> wrap) followed by
+// cascaded sine folding for the Harmonics knob.
+function shapeCurve(u, fold, zoneA, a, harm) {
+  let y;
+  const folded = fastSin(HALF_PI_F * fold * u);
+  if (zoneA) y = (1 - a) * sat(u) + a * folded;
+  else y = (1 - a) * folded + a * wrap(0.5 * fold * u);
+  if (harm > 0) {
+    const h1 = fastSin(PI * y * (0.5 + harm));
+    y = y + harm * (h1 - y);
+    const h2 = fastSin(PI * y * (0.5 + 0.5 * harm));
+    y = y + 0.5 * harm * (h2 - y);
+  }
+  return y;
+}
+
 // Overmind: wavefolder and distortion tour, 4x oversampled.
 export class Overmind extends Effect {
   constructor(engine, spec) {
@@ -95,23 +111,12 @@ export class Overmind extends Effect {
       const s = clamp(shapeBase + smoothstep(0.02, 0.4, e) * 0.3, 0, 1);
       const zoneA = s < 0.5;
       const a = zoneA ? s * 2 : (s - 0.5) * 2;
+      // subtracting the curve's value at the bias point keeps silence silent:
+      // a slowly moving Bias, Harmonics or loop mutation can never leak through
+      const zero = shapeCurve(bias, fold, zoneA, a, harm);
       for (let c = 0; c < 2; c++) {
         const up = this.os[c].upsample(ins[c][i] * drive + bias);
-        for (let k = 0; k < 4; k++) {
-          const u = up[k];
-          let y;
-          const folded = fastSin(HALF_PI_F * fold * u);
-          if (zoneA) y = (1 - a) * sat(u) + a * folded;
-          else y = (1 - a) * folded + a * wrap(0.5 * fold * u);
-          if (harm > 0) {
-            // cascaded sine folding
-            const h1 = fastSin(PI * y * (0.5 + harm));
-            y = y + harm * (h1 - y);
-            const h2 = fastSin(PI * y * (0.5 + 0.5 * harm));
-            y = y + 0.5 * harm * (h2 - y);
-          }
-          up[k] = y;
-        }
+        for (let k = 0; k < 4; k++) up[k] = shapeCurve(up[k], fold, zoneA, a, harm) - zero;
         let y = this.os[c].downsample(up);
         y = this.dc[c].process(y);
         if (decim < 1) {

@@ -142,6 +142,90 @@ test('no hiss: with nothing playing the rack goes fully silent', () => {
   assert.ok(lvl < -100, `idle output should be silent, got ${lvl.toFixed(1)} dBFS`);
 });
 
+test('feedback loops never sustain themselves: dice patches fade to silence', () => {
+  for (let seed = 1; seed <= 8; seed++) {
+    const model = new PatchModel();
+    model.setGlobal('fdbkChance', 1);
+    const rng = new Rng(seed * 13 + 5);
+    for (const r of [1, 2, 3]) model.rollRoute(r, rng);
+    const e = makeEngine();
+    applyModel(e, model);
+    e.setSource(0, 'keys');
+    e.setSource(1, 'beat');
+    e.setSource(2, 'pad');
+    const playing = rmsDb(render(e, 8).L.subarray(SR * 4));
+    e.setSource(0, 'off');
+    e.setSource(1, 'off');
+    e.setSource(2, 'off');
+    render(e, 14);
+    const after = rmsDb(render(e, 4).L);
+    assert.ok(after < -70, `seed ${seed}: still ${after.toFixed(1)} dBFS 14 s after the input stopped (was ${playing.toFixed(1)})`);
+  }
+});
+
+test('a loop throttled open past centre may bloom, but stays bounded', () => {
+  const e = makeEngine();
+  e.setSource(0, 'keys');
+  e.setPatch([
+    ...stereo('a', 'host', 'from1', 'echoforge', 'in1'),
+    ...stereo('b', 'echoforge', 'out1', 'merger', 'aIn1'),
+    ...stereo('c', 'merger', 'aOut', 'splitter', 'aIn'),
+    ...stereo('d', 'splitter', 'aOut1', 'echoforge', 'in2'),
+    ...stereo('e', 'splitter', 'aOut2', 'host', 'to'),
+  ]);
+  e.setParam('merger', 'gainA', 0.85);
+  const out = render(e, 12);
+  assert.ok(peak(out.L) <= CEIL, 'over ceiling');
+  assert.equal(countNonFinite(out.L), 0);
+  assert.equal(e.faults, 0);
+});
+
+test('patching one side of a stereo input crossfades (no click)', () => {
+  const e = makeEngine();
+  e.setSource(0, 'input');
+  // L-only cable: R input is fed by mono normalisation
+  e.setPatch([cab('l', 'host', 'from1L', 'mixer', 'ch1L'), ...stereo('o', 'mixer', 'out', 'host', 'to')]);
+  render(e, 0.5, { input: () => 0.25 });
+  const m = e.modules.get('mixer');
+  let maxStep = 0, last = null;
+  const watch = () => {
+    for (let n = 0; n < BLOCK; n++) {
+      const v = m.cur.outR[n];
+      if (last !== null) maxStep = Math.max(maxStep, Math.abs(v - last));
+      last = v;
+    }
+  };
+  // now patch R with a different signal (zero): R must glide, not jump
+  e.setPatch([cab('l', 'host', 'from1L', 'mixer', 'ch1L'), cab('r', 'host', 'from2R', 'mixer', 'ch1R'), ...stereo('o', 'mixer', 'out', 'host', 'to')]);
+  render(e, 0.1, { input: () => 0.25, onBlock: watch });
+  e.setPatch([cab('l', 'host', 'from1L', 'mixer', 'ch1L'), ...stereo('o', 'mixer', 'out', 'host', 'to')]);
+  render(e, 0.1, { input: () => 0.25, onBlock: watch });
+  assert.ok(maxStep < 0.01, `largest sample step ${maxStep}`);
+});
+
+test('long grains and glitches at slow tempos stay inside their buffers', () => {
+  for (const id of ['chrono', 'glitch']) {
+    const e = makeEngine();
+    e.setSource(0, 'input');
+    e.setGlobal('bpm', 40);
+    e.setPatch(isolate(MODULES.find((m) => m.id === id)));
+    const spec = MODULES.find((m) => m.id === id);
+    for (const p of spec.params) e.setParam(id, p.id, 1);
+    e.setParam(id, 'chance', 0.5);
+    const m = e.modules.get(id);
+    const bufs = m.buf;
+    let bad = 0;
+    const origRead = bufs[0].readHermite.bind(bufs[0]);
+    bufs[0].readHermite = (pos) => {
+      const w = bufs[0].pos;
+      if (pos > w - 1 || pos < w - bufs[0].size + 2) bad++;
+      return origRead(pos);
+    };
+    render(e, 12, { input: signals.bursts(220, 0.5) });
+    assert.equal(bad, 0, `${id}: ${bad} reads outside the recorded window`);
+  }
+});
+
 test('Dust Engine noise floor stays warm (no high hiss) while music plays', () => {
   const e = makeEngine();
   e.setSource(0, 'input');

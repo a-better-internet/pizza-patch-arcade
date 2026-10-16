@@ -12,13 +12,21 @@
 //  * Audio on a feedback edge passes a "cable loss" stage: DC blocker, gentle
 //    6 kHz low-pass and a soft bound. Loops therefore darken as they
 //    recirculate (they recede into a wash) instead of building fizzy harmonics.
+//  * Loop governor: delays and resonances give every loop some frequency where
+//    its gain exceeds unity, so left alone any loop would end in a saturated,
+//    self-sustaining howl. For each loop the engine compares the energy fed
+//    into it with the energy recirculating on its feedback cables. A loop may
+//    bloom to +3 dB above what feeds it but cannot keep itself alive once the
+//    input stops; it fades out over a few seconds. Opening a Splitter or
+//    Merger gain past centre inside the loop (the manual's "loop throttle")
+//    raises that allowance and permits a bounded self-sustaining bloom.
 
-import { MODULES, BLOCK, HOST_ID, jackMap } from '../spec.js';
-import { processOrder, loopModules, neededModules } from '../graph.js';
+import { MODULES, BLOCK, HOST_ID, jackMap, utilGainDb } from '../spec.js';
+import { processOrder, loopModules, loopComponents, neededModules } from '../graph.js';
 import { MasterChain } from './master.js';
 import { createSource, InputConditioner, SOURCE_NAMES } from './sources.js';
 import { MODULE_CLASSES } from './modules/index.js';
-import { softLimit, sat, smoothCoef, HALF_PI, clamp, Biquad, DCBlocker } from './util.js';
+import { softLimit, sat, smoothCoef, HALF_PI, clamp, Biquad, DCBlocker, dbToGain } from './util.js';
 
 const CABLE_FADE_S = 0.012;
 const SOURCE_FADE_S = 0.015;
@@ -35,6 +43,8 @@ class HostNode {
     this.prev = this.cur;
     this.in = { toL: new Float32Array(BLOCK), toR: new Float32Array(BLOCK) };
     this.inConnected = { toL: false, toR: false };
+    this.inW = { toL: 0, toR: 0 };
+    this.inWPrev = { toL: 0, toR: 0 };
     this.inCables = { toL: [], toR: [] };
   }
 }
@@ -97,6 +107,15 @@ export class Engine {
     this.outR = new Float32Array(BLOCK);
     this.faults = 0;
     this.blocks = 0;
+    // loop governor
+    this.loopsInfo = [];
+    const bs = BLOCK / sr;
+    this.govDown = Math.pow(10, (-12 / 20) * bs); // -12 dB/s
+    this.govUp = Math.pow(10, (20 / 20) * bs); // +20 dB/s, only while the loop is being fed
+    this.inAtt = smoothCoef(0.05, sr / BLOCK);
+    this.inRel = smoothCoef(0.4, sr / BLOCK);
+    this.inHold = Math.round((0.8 * sr) / BLOCK); // bridges gaps between notes
+    this.fbCoef = smoothCoef(0.1, sr / BLOCK);
   }
 
   // ------------------------------------------------------------------ control
@@ -135,7 +154,17 @@ export class Engine {
       if (m.resetDry) m.resetDry();
       m.clearOutputs();
     }
+    for (const c of this.cables.values()) this.resetCable(c);
     this.master.reset();
+  }
+
+  resetCable(c) {
+    if (c.cond) {
+      c.cond.lp.reset();
+      c.cond.dc.reset();
+    }
+    c.pow = 0;
+    c.lg = c.lgPrev = 1;
   }
 
   // cables: [{ id, from: { m, j }, to: { m, j } }]
@@ -173,6 +202,7 @@ export class Engine {
       const audio = jackMap(c.from.m)[c.from.j].type === 'audio';
       const cab = {
         id, from: c.from, to: c.to, src, srcJack: c.from.j, dst, dstJack: c.to.j, g: 0, target: 1, back: false,
+        track: false, pow: 0, lg: 1, lgPrev: 1, hold: 0,
         cond: audio ? { lp: new Biquad(this.sr).lowpass(6000, 0.7071), dc: new DCBlocker(this.sr, 10) } : null,
       };
       this.cables.set(id, cab);
@@ -193,6 +223,16 @@ export class Engine {
     }
     const loops = loopModules(live);
     const needed = neededModules(all);
+    for (const c of all) c.track = false;
+    this.loopsInfo = loopComponents(live).map((members) => {
+      const set = new Set(members);
+      const entries = all.filter((c) => c.cond && set.has(c.to.m) && !set.has(c.from.m));
+      const backs = all.filter((c) => c.cond && c.back && set.has(c.to.m) && set.has(c.from.m));
+      for (const c of entries) c.track = true;
+      for (const c of backs) c.track = true;
+      const utils = members.filter((id) => id === 'merger' || id === 'splitter').map((id) => this.modules.get(id));
+      return { entries, backs, utils };
+    });
     for (const m of this.moduleList) {
       m.inLoop = loops.has(m.id);
       const act = needed.has(m.id);
@@ -215,7 +255,9 @@ export class Engine {
     for (const jack in node.inCables) {
       const list = node.inCables[jack];
       const buf = node.in[jack];
+      node.inWPrev[jack] = node.inW[jack];
       if (list.length === 0) {
+        node.inW[jack] = 0;
         if (node.inConnected[jack]) {
           buf.fill(0);
           node.inConnected[jack] = false;
@@ -228,6 +270,18 @@ export class Engine {
         const c = list[k];
         let s = c.src.processed ? c.src.cur[c.srcJack] : c.src.prev[c.srcJack];
         if (c.back) s = this.condition(c, s);
+        if (c.track) {
+          let p = 0;
+          for (let n = 0; n < BLOCK; n++) p += s[n] * s[n];
+          p = (p / BLOCK) * c.g * c.g;
+          if (c.back) c.pow += (p - c.pow) * this.fbCoef;
+          else if (p >= c.pow) {
+            c.pow += (p - c.pow) * this.inAtt;
+            c.hold = this.inHold;
+          } else if (c.hold > 0) c.hold--;
+          else c.pow += (p - c.pow) * this.inRel;
+          if (!(c.pow < 1e6)) c.pow = 0;
+        }
         if (c.g === 1 && c.target === 1) {
           for (let n = 0; n < BLOCK; n++) buf[n] += s[n];
         } else {
@@ -249,6 +303,9 @@ export class Engine {
         this.dirty = true;
       }
       node.inConnected[jack] = node.inCables[jack].length > 0;
+      let w = 0;
+      for (const c of node.inCables[jack]) w += c.g;
+      node.inW[jack] = w > 1 ? 1 : w;
     }
   }
 
@@ -257,11 +314,40 @@ export class Engine {
     const t = this.tmp || (this.tmp = new Float32Array(BLOCK));
     if (c.cond) {
       const { lp, dc } = c.cond;
-      for (let n = 0; n < BLOCK; n++) t[n] = 1.5 * sat(dc.process(lp.process(s[n])) / 1.5);
+      const g0 = c.lgPrev, dg = (c.lg - c.lgPrev) / BLOCK;
+      for (let n = 0; n < BLOCK; n++) t[n] = 1.5 * sat(dc.process(lp.process(s[n] * (g0 + dg * n))) / 1.5);
+      c.lgPrev = c.lg;
+      const z = t[BLOCK - 1];
+      if (z !== z) {
+        // a NaN reached the cable filters: clear them rather than let it stick
+        this.resetCable(c);
+        t.fill(0);
+      }
     } else {
       for (let n = 0; n < BLOCK; n++) t[n] = clamp(s[n], -2, 2);
     }
     return t;
+  }
+
+  // Loop governor (see header): runs once per block, gains apply next block.
+  governLoops() {
+    for (const L of this.loopsInfo) {
+      if (!L.backs.length) continue;
+      let eIn = 0;
+      for (const c of L.entries) eIn += c.pow;
+      let thr = 1;
+      for (const u of L.utils) thr = Math.max(thr, dbToGain(utilGainDb(Math.max(u.p.gainA, u.p.gainB))));
+      const K = 2 * thr * thr * thr * thr; // power allowance relative to the input
+      const floor = thr > 1.05 ? 2e-3 * (thr * thr - 1) : 0; // bounded self-sustain when throttled open
+      const allowed = Math.max(K * eIn, floor, 1e-12);
+      // a loop may only regain gain while something is feeding it (or the
+      // throttle is open); otherwise it could regrow from numerical residue
+      const fed = eIn > 1e-8 || floor > 0;
+      for (const c of L.backs) {
+        if (c.pow > allowed || !fed) c.lg = Math.max(1e-3, c.lg * this.govDown);
+        else if (c.lg < 1) c.lg = Math.min(1, c.lg * this.govUp);
+      }
+    }
   }
 
   renderHosts(inputs, bps) {
@@ -319,17 +405,37 @@ export class Engine {
       this.route(m);
       m.updateParams();
       m.process();
-      if (!m.verify()) this.faults++;
+      // every output sample: soft-bound loud values, catch NaN/Inf
+      let bad = !m.verify();
       for (let k = 0; k < m.outKeys.length; k++) {
         const b = m.cur[m.outKeys[k]];
         for (let n = 0; n < BLOCK; n++) {
           const x = b[n];
-          if (x > 4 || x < -4) b[n] = softLimit(x, 4, 8);
+          if (x > 4 || x < -4) {
+            if (x < 1e9 && x > -1e9) b[n] = softLimit(x, 4, 8);
+            else {
+              b[n] = 0;
+              bad = true;
+            }
+          } else if (x !== x) {
+            b[n] = 0;
+            bad = true;
+          }
         }
+      }
+      if (bad) {
+        this.faults++;
+        try {
+          m.reset();
+        } catch {
+          /* ignore */
+        }
+        m.clearOutputs();
       }
       m.processed = true;
     }
     this.route(this.host);
+    this.governLoops();
 
     // global wet/dry against the summed host inputs, then bypass
     const dL = this.dryL, dR = this.dryR;

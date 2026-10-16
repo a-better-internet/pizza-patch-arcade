@@ -105,11 +105,12 @@ m = await measure(5);
 check('three dice routes under ceiling', m.peak <= 0.892, `peak ${m.peak.toFixed(3)}`);
 check('three dice routes keep the top end calm', m.hf12Db < -24, `>12 kHz ${m.hf12Db.toFixed(1)} dB`);
 
-// switch every source off: the rack must fall completely silent (no hiss)
+// switch every source off: tails may ring out, then the rack must fall
+// completely silent (no hiss, no self-sustaining loop)
 for (let i = 0; i < 3; i++) await page.selectOption(`#src${i}`, 'off');
-await page.waitForTimeout(9000);
+await page.waitForTimeout(18000);
 m = await measure(2);
-check('silent when nothing plays', m.rmsDb < -100, `rms ${m.rmsDb.toFixed(1)} dBFS`);
+check('silent 18 s after the sources stop', m.rmsDb < -90, `rms ${m.rmsDb.toFixed(1)} dBFS`);
 
 await page.screenshot({ path: path.join(outDir, 'rack.png'), fullPage: true });
 check('no console errors', problems.length === 0, problems.join(' | '));

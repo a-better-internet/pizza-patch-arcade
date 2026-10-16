@@ -16,8 +16,9 @@ export const HOST_SOURCES = [
 // source; Chrome refuses Blob URLs on file:// pages, so a data: URL follows.
 function workletURLs() {
   const src = globalThis.__PA_WORKLET_SOURCE__;
+  const extra = Array.isArray(globalThis.__PA_WORKLET_URLS__) ? globalThis.__PA_WORKLET_URLS__ : [];
   if (typeof src === 'string') {
-    const urls = [];
+    const urls = [...extra];
     try {
       urls.push(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
     } catch {
@@ -51,6 +52,7 @@ export class AudioHost {
     this.node = null;
     this.inBus = [];
     this.ext = [null, null, null];
+    this.tokens = [0, 0, 0];
   }
 
   get running() {
@@ -122,47 +124,62 @@ export class AudioHost {
     if (this.node) this.node.port.postMessage(msg);
   }
 
-  stopExternal(h) {
+  // Disconnect an external source. `delayMs` lets the engine's 15 ms source
+  // fade finish first, so switching away from a mic or file never clicks.
+  stopExternal(h, delayMs = 0) {
     const x = this.ext[h];
     if (!x) return;
-    try {
-      if (x.node) x.node.disconnect();
-      if (x.buffer) x.node.stop();
-      if (x.stream) x.stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      /* ignore */
-    }
     this.ext[h] = null;
+    const kill = () => {
+      try {
+        if (x.node) x.node.disconnect();
+        if (x.buffer) x.node.stop();
+        if (x.stream) x.stream.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* ignore */
+      }
+    };
+    if (delayMs > 0) setTimeout(kill, delayMs);
+    else kill();
   }
 
-  // kind: demo name | 'off' | 'mic' | 'file' (with `file`)
+  // kind: demo name | 'off' | 'mic' | 'file' (with `file`). A newer call for
+  // the same input supersedes an older one still waiting on a permission
+  // prompt or a file decode.
   async setSource(h, kind, file) {
     if (!this.ctx) return;
-    this.stopExternal(h);
-    if (kind === 'mic') {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Microphone input is not available in this browser.');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
-      const node = this.ctx.createMediaStreamSource(stream);
-      node.connect(this.inBus[h]);
-      this.ext[h] = { node, stream };
-      this.send({ type: 'source', host: h, name: 'input' });
-      return;
-    }
-    if (kind === 'file') {
-      if (!file) throw new Error('No file chosen.');
-      const data = await file.arrayBuffer();
-      const buffer = await this.ctx.decodeAudioData(data);
-      const node = this.ctx.createBufferSource();
-      node.buffer = buffer;
-      node.loop = true;
-      node.connect(this.inBus[h]);
-      node.start();
-      this.ext[h] = { node, buffer };
+    const token = ++this.tokens[h];
+    const stale = () => token !== this.tokens[h] || !this.ctx;
+    if (kind === 'mic' || kind === 'file') {
+      let x;
+      if (kind === 'mic') {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Microphone input is not available in this browser.');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+        if (stale()) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        x = { node: this.ctx.createMediaStreamSource(stream), stream };
+      } else {
+        if (!file) throw new Error('No file chosen.');
+        const buffer = await this.ctx.decodeAudioData(await file.arrayBuffer());
+        if (stale()) return;
+        const node = this.ctx.createBufferSource();
+        node.buffer = buffer;
+        node.loop = true;
+        node.start();
+        x = { node, buffer };
+      }
+      // swap: the engine crossfades its input while the old source drains
+      this.stopExternal(h, 60);
+      x.node.connect(this.inBus[h]);
+      this.ext[h] = x;
       this.send({ type: 'source', host: h, name: 'input' });
       return;
     }
     this.send({ type: 'source', host: h, name: kind });
+    this.stopExternal(h, 60);
   }
 }

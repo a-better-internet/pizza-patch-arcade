@@ -61,6 +61,14 @@ export function processOrder(moduleIds, cables) {
 // Modules that sit inside a feedback loop (audio or CV): members of a strongly
 // connected component with more than one node, or with a self-edge.
 export function loopModules(cables) {
+  const out = new Set();
+  for (const comp of loopComponents(cables)) for (const n of comp) out.add(n);
+  return out;
+}
+
+// The feedback loops themselves: each strongly connected component (as an
+// array of module ids) that contains a cycle.
+export function loopComponents(cables) {
   const adj = adjacency(cables);
   const nodes = new Set();
   for (const [a, bs] of adj) {
@@ -72,7 +80,7 @@ export function loopModules(cables) {
   const low = new Map();
   const onStack = new Set();
   const stack = [];
-  const result = new Set();
+  const result = [];
 
   const strong = (v0) => {
     // iterative Tarjan
@@ -113,14 +121,13 @@ export function loopModules(cables) {
             comp.push(w);
           } while (w !== v);
           const selfLoop = comp.length === 1 && adj.has(v) && adj.get(v).has(v);
-          if (comp.length > 1 || selfLoop) for (const n of comp) result.add(n);
+          const members = comp.filter((n) => n !== HOST_IN && n !== HOST_OUT);
+          if ((comp.length > 1 || selfLoop) && members.length) result.push(members);
         }
       }
     }
   };
   for (const n of nodes) if (!idx.has(n)) strong(n);
-  result.delete(HOST_IN);
-  result.delete(HOST_OUT);
   return result;
 }
 

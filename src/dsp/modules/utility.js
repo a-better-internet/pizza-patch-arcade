@@ -2,18 +2,13 @@ import { ModuleBase } from '../module.js';
 import { Oversampler, sat, dbToGain, HALF_PI } from '../util.js';
 import { faderGain, utilGainDb } from '../../spec.js';
 
-// Pick the buffer for one side of a stereo pair, copying the other side when
-// only one jack of the pair is patched (mono normalisation).
-function side(mod, l, r, wantLeft) {
-  const c = mod.inConnected;
-  if (wantLeft) return c[l] || !c[r] ? mod.in[l] : mod.in[r];
-  return c[r] || !c[l] ? mod.in[r] : mod.in[l];
-}
+const scratch = () => [new Float32Array(64), new Float32Array(64)];
 
 // Stereo Splitter: two circuits, each one stereo input -> four stereo outputs.
 export class StereoSplitter extends ModuleBase {
   constructor(engine, spec) {
     super(engine, spec);
+    this.tmp = scratch();
     for (const c of ['a', 'b']) {
       for (let i = 2; i <= 4; i++) {
         this.alias(`${c}Out${i}L`, `${c}Out1L`);
@@ -25,7 +20,8 @@ export class StereoSplitter extends ModuleBase {
     for (const c of ['a', 'b']) {
       const id = c === 'a' ? 'gainA' : 'gainB';
       const g0 = dbToGain(utilGainDb(this.pPrev[id])), g1 = dbToGain(utilGainDb(this.p[id]));
-      const L = side(this, `${c}InL`, `${c}InR`, true), R = side(this, `${c}InL`, `${c}InR`, false);
+      const [L, R] = this.tmp;
+      this.readPair(`${c}InL`, `${c}InR`, L, R);
       const oL = this.cur[`${c}Out1L`], oR = this.cur[`${c}Out1R`];
       for (let n = 0; n < 64; n++) {
         const g = g0 + ((g1 - g0) * n) / 64;
@@ -42,6 +38,7 @@ export class StereoMerger extends ModuleBase {
   constructor(engine, spec) {
     super(engine, spec);
     this.os = [0, 1, 2, 3].map(() => new Oversampler(2));
+    this.tmp = scratch();
   }
   reset() {
     for (const o of this.os) o.reset();
@@ -51,20 +48,18 @@ export class StereoMerger extends ModuleBase {
     for (const c of ['a', 'b']) {
       const id = c === 'a' ? 'gainA' : 'gainB';
       const g0 = dbToGain(utilGainDb(this.pPrev[id])), g1 = dbToGain(utilGainDb(this.p[id]));
-      const ins = [];
+      const [sumL, sumR] = this.tmp;
+      sumL.fill(0);
+      sumR.fill(0);
       for (let i = 1; i <= 4; i++) {
         const l = `${c}In${i}L`, r = `${c}In${i}R`;
-        if (this.inConnected[l] || this.inConnected[r]) ins.push([side(this, l, r, true), side(this, l, r, false)]);
+        if (this.inConnected[l] || this.inConnected[r]) this.readPair(l, r, sumL, sumR, true);
       }
       const oL = this.cur[`${c}OutL`], oR = this.cur[`${c}OutR`];
       const osL = this.os[k++], osR = this.os[k++];
       for (let n = 0; n < 64; n++) {
         const g = g0 + ((g1 - g0) * n) / 64;
-        let l = 0, r = 0;
-        for (let j = 0; j < ins.length; j++) {
-          l += ins[j][0][n];
-          r += ins[j][1][n];
-        }
+        const l = sumL[n], r = sumR[n];
         const ul = osL.upsample(l * g);
         ul[0] = 1.25 * sat(ul[0] / 1.25);
         ul[1] = 1.25 * sat(ul[1] / 1.25);
@@ -85,6 +80,7 @@ export class Mixer extends ModuleBase {
     this.peaks = new Float64Array(4);
     this.g0 = new Float64Array(6);
     this.g1 = new Float64Array(6);
+    this.tmp = scratch();
   }
   readMeters() {
     const out = Array.from(this.peaks);
@@ -115,7 +111,8 @@ export class Mixer extends ModuleBase {
     for (let c = 0; c < 3; c++) {
       const l = `ch${c + 1}L`, r = `ch${c + 1}R`;
       if (!this.inConnected[l] && !this.inConnected[r]) continue;
-      const L = side(this, l, r, true), R = side(this, l, r, false);
+      const [L, R] = this.tmp;
+      this.readPair(l, r, L, R);
       const a0 = g0[2 * c], a1 = g1[2 * c], b0 = g0[2 * c + 1], b1 = g1[2 * c + 1];
       let pk = this.peaks[c];
       for (let n = 0; n < 64; n++) {

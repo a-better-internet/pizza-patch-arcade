@@ -63,6 +63,15 @@ These protections are built into the engine and each is covered by a test.
   grow when you push the Splitter or Merger gains, as the manual describes.
 - Feedback inside effects (Echoforge, Spectral Ghost, Chrono Shredder, Tape Phantom) is
   low-passed, DC-blocked and soft-saturated, so even near-unity regeneration stays bounded.
+- **Loop governor.** Delays and resonances give almost every loop some frequency where its
+  gain exceeds unity, so left alone a loop ends in a saturated, self-sustaining howl. For
+  each loop, the engine compares the energy feeding it with the energy recirculating on its
+  feedback cables.
+  - A loop may bloom up to +3 dB above its input.
+  - Once the input stops, the loop fades out within a few seconds and cannot regrow from
+    numerical residue.
+  - Opening a Splitter or Merger gain past centre inside the loop (the manual's "loop
+    throttle") deliberately allows a bounded, self-sustaining bloom.
 - Everything leaves through the output chain, in this order:
   1. DC blocker and 20 Hz subsonic high-pass;
   2. 8th-order 15.5 kHz low-pass;
@@ -93,11 +102,16 @@ These protections are built into the engine and each is covered by a test.
   gate fades it out entirely when nothing is playing.
 - Bit reduction is undithered, so digital silence stays silent.
 - A master silence gate removes any residual floor below −80 dBFS. When nothing plays, the
-  output is true digital zero.
+  output is true digital zero. Tests check this for random dice patches with feedback
+  loops in every route.
+- Overmind subtracts its transfer curve's value at the bias point, so a moving Bias,
+  Harmonics or loop mutation cannot leak a signal out of silence.
 - All demo instruments are band-limited: sines, PolyBLEP saws and Karplus-Strong.
 
 **Clicks**
-- Cables fade in and out over 12 ms.
+- Cables fade in and out over 12 ms. When only one side of a stereo input is patched, its
+  signal is copied to the other side with the same fade, so adding or removing the second
+  cable never clicks.
 - Knobs and CV are smoothed per sample.
 - Glitches, gates and stutters use short crossfades, and grains are Hann-windowed.
 - Source switching crossfades.
@@ -111,7 +125,7 @@ src/graph.js               loop detection, processing order, cable ancestry (rou
 src/patch.js               patch model: patching rules, dice, (de)serialisation
 src/presets.js             factory patches
 src/dsp/worklet.js         AudioWorkletProcessor wrapper (never throws on the audio thread)
-src/dsp/engine.js          64-sample block router, feedback edges, cable fades, host I/O
+src/dsp/engine.js          64-sample block router, feedback edges, loop governor, cable fades, host I/O
 src/dsp/master.js          output safety chain
 src/dsp/modules/*.js       the 18 modules
 src/dsp/util.js            filters, delay lines, half-band oversampler, PRNG
@@ -125,7 +139,7 @@ inputs. A cable that points backwards in that order is a feedback edge and carri
 batch, so a module patched into itself rings at about 750 Hz (1.3 ms) as the manual describes.
 Modules that cannot reach To Host are skipped to save CPU.
 
-A dense patch, with three dice routes and eleven active modules, uses about 37% of one CPU core
+A dense patch, with three dice routes and eleven active modules, uses about 40% of one CPU core
 in Node/V8. Typical patches use much less.
 
 ## Browser notes

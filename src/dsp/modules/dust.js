@@ -15,6 +15,7 @@ export class DustEngine extends Effect {
     this.noiseLp = [new SVF(sr), new SVF(sr)];
     this.noiseHp = [new OnePole(sr, 70), new OnePole(sr, 70)];
     this.busLp = [new Biquad(sr).lowpass(7000, 0.6), new Biquad(sr).lowpass(7000, 0.6)];
+    this.popLp = [new Biquad(sr).lowpass(7000, 0.6), new Biquad(sr).lowpass(7000, 0.6)];
     this.tick = [new SVF(sr), new SVF(sr)];
     this.thump = [new SVF(sr), new SVF(sr)];
     this.inEnv = new Env(sr, 0.01, 0.3);
@@ -39,6 +40,7 @@ export class DustEngine extends Effect {
     for (const p of this.pink) p.fill(0);
     for (const f of this.noiseLp) f.reset();
     for (const f of this.busLp) f.reset();
+    for (const f of this.popLp) f.reset();
     for (const f of this.tick) f.reset();
     for (const f of this.thump) f.reset();
     for (const d of this.warp) d.clear();
@@ -89,7 +91,7 @@ export class DustEngine extends Effect {
       const xl = inL[i], xr = inR[i];
       const e = this.inEnv.process(Math.max(Math.abs(xl), Math.abs(xr)));
       // silence gate for the noise bed
-      if (e < 0.0005) this.silent += dt;
+      if (e < 0.001) this.silent += dt;
       else this.silent = 0;
       const gWant = this.silent > 1.2 ? 0 : 1;
       this.gate = flush(this.gate + (gWant > this.gate ? this.gOpen : this.gClose) * (gWant - this.gate));
@@ -134,20 +136,23 @@ export class DustEngine extends Effect {
         nl = a * g;
         nr = b * g;
       }
-      // --- crackle: bright ticks with a share of deeper woody thumps
+      // --- crackle: bright ticks with a share of deeper woody thumps.
+      // A unit kick into the filter state rings at ~0.8-0.9 peak, so the
+      // loudest pop peaks near -16 dBFS.
       if (this.gate > 1e-3 && rng.next() < popRate * dt) {
-        const amp = dbToGain(-30 + 22 * rng.next()) * this.gate;
+        const amp = dbToGain(-38 + 22 * rng.next()) * this.gate * 1.15;
         const pan = rng.next();
+        const gl = Math.cos(pan * 1.5708), gr = Math.sin(pan * 1.5708);
         if (rng.next() < 0.75) {
           const f = 1800 + 2600 * rng.next();
           for (const t of this.tick) t.set(f, 1.6);
-          this.tick[0].ic1 += amp * (1 - pan) * 6;
-          this.tick[1].ic1 += amp * pan * 6;
+          this.tick[0].ic1 += amp * gl;
+          this.tick[1].ic1 += amp * gr;
         } else {
           const f = 220 + 380 * rng.next();
           for (const t of this.thump) t.set(f, 2.5);
-          this.thump[0].ic1 += amp * (1 - pan) * 10;
-          this.thump[1].ic1 += amp * pan * 10;
+          this.thump[0].ic1 += amp * gl * 0.8;
+          this.thump[1].ic1 += amp * gr * 0.8;
         }
         popped = true;
       }
@@ -155,10 +160,9 @@ export class DustEngine extends Effect {
       this.tick[1].process(0);
       this.thump[0].process(0);
       this.thump[1].process(0);
-      const cl = this.busLp[0].process(nl + this.tick[0].bp + this.thump[0].lp);
-      const cr = this.busLp[1].process(nr + this.tick[1].bp + this.thump[1].lp);
-      l += cl;
-      r += cr;
+      l += this.busLp[0].process(nl);
+      r += this.busLp[1].process(nr);
+      let rush = 1;
       // --- OTT-style compression: squash peaks, lift quiet passages (never silence)
       if (comp > 0) {
         const a = Math.max(Math.abs(l), Math.abs(r));
@@ -171,7 +175,13 @@ export class DustEngine extends Effect {
         this.compG += (gt - this.compG) * this.compGc;
         l *= this.compG;
         r *= this.compG;
+        // crackle "rushes in between hits": it follows the upward gain, bounded
+        rush = Math.min(2, Math.max(1, this.compG));
       }
+      // pops join after the compressor so a pop can never ride a lifted gain
+      // into a spike
+      l += this.popLp[0].process(this.tick[0].bp + this.thump[0].lp) * rush;
+      r += this.popLp[1].process(this.tick[1].bp + this.thump[1].lp) * rush;
       wetL[i] = l;
       wetR[i] = r;
     }

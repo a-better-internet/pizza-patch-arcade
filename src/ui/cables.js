@@ -58,8 +58,7 @@ export class CableLayer {
     document.body.appendChild(this.svg);
     this.root = svg('g', { class: 'cables' }, this.svg);
     this.fx = svg('g', { class: 'fx' }, this.svg);
-    this.ghost = null;
-    this.drag = null;
+    this.endDrag = null;
     this.scale = 1;
 
     document.addEventListener('pointerdown', (e) => this.onPointerDown(e));
@@ -71,7 +70,11 @@ export class CableLayer {
     window.addEventListener('keyup', (e) => {
       if (e.key === 'Shift') document.body.classList.remove('delete-mode');
     });
-    window.addEventListener('blur', () => document.body.classList.remove('delete-mode'));
+    window.addEventListener('blur', () => {
+      // a held Shift is lost on blur, but the cut-mode toggle stays in force
+      if (!document.body.classList.contains('cut-mode')) document.body.classList.remove('delete-mode');
+      this.cancelDrag();
+    });
     document.addEventListener('dblclick', (e) => {
       const j = e.target.closest && e.target.closest('.jack');
       if (!j) return;
@@ -199,19 +202,26 @@ export class CableLayer {
   }
 
   // ---------------------------------------------------------- interaction
+  // Abort an in-flight drag (second pointer, window blur, pointercancel).
+  cancelDrag() {
+    if (this.endDrag) this.endDrag(null);
+  }
+
   onPointerDown(e) {
     const jackEl = e.target.closest && e.target.closest('.jack');
     if (!jackEl || e.button !== 0) return;
     e.preventDefault();
+    // one cable at a time: a second finger or a stale drag never stacks ghosts
+    if (this.endDrag) return;
     const src = { m: jackEl.dataset.m, j: jackEl.dataset.j };
     const spec = getJack(src.m, src.j);
     if (!spec) return;
     const start = getCenter(jackEl);
+    const pointerId = e.pointerId;
     // MouseDown (Jack): create the ghost path, never interactive
-    this.ghost = svg('path', { class: 'ghost', stroke: spec.type === 'cv' ? CABLE_COLORS.cv : CABLE_COLORS.ghost }, this.svg);
-    this.ghost.style.pointerEvents = 'none';
-    this.ghost.setAttribute('d', gravityPath(start.x, start.y, e.clientX, e.clientY));
-    this.drag = { src, start, jackEl, pointerId: e.pointerId };
+    const ghost = svg('path', { class: 'ghost', stroke: spec.type === 'cv' ? CABLE_COLORS.cv : CABLE_COLORS.ghost }, this.svg);
+    ghost.style.pointerEvents = 'none';
+    ghost.setAttribute('d', gravityPath(start.x, start.y, e.clientX, e.clientY));
     document.body.classList.add('dragging');
     jackEl.classList.add('source');
     // Standard mode visuals: highlight valid targets, dim the rest
@@ -222,36 +232,37 @@ export class CableLayer {
       el.classList.toggle('invalid', !ok);
     }
     const move = (ev) => {
-      if (ev.pointerId !== this.drag.pointerId || !this.ghost) return;
-      this.ghost.setAttribute('d', gravityPath(start.x, start.y, ev.clientX, ev.clientY));
+      if (ev.pointerId !== pointerId) return;
+      ghost.setAttribute('d', gravityPath(start.x, start.y, ev.clientX, ev.clientY));
     };
-    const up = (ev) => {
-      if (ev.pointerId !== this.drag.pointerId) return;
+    const finish = (ev) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
+      this.endDrag = null;
       // Step A: always remove the ghost first
-      if (this.ghost) this.ghost.remove();
-      this.ghost = null;
+      ghost.remove();
       document.body.classList.remove('dragging');
       jackEl.classList.remove('source');
       for (const [, el] of this.ui.jacks) el.classList.remove('valid', 'invalid');
-      const drag = this.drag;
-      this.drag = null;
-      if (ev.type === 'pointercancel') return;
+      if (!ev || ev.type === 'pointercancel') return;
       // Step B: find the drop target
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
       const target = under && under.closest ? under.closest('.jack') : null;
       if (!target || target === jackEl) return;
       const dst = { m: target.dataset.m, j: target.dataset.j };
-      const chk = PatchModel.check(drag.src, dst);
+      const chk = PatchModel.check(src, dst);
       if (chk.error) {
         if (this.onReject) this.onReject(chk.error, target);
         return;
       }
       // Step C: create a brand new permanent cable
-      this.onConnect(drag.src, dst);
+      this.onConnect(src, dst);
     };
+    const up = (ev) => {
+      if (ev.pointerId === pointerId) finish(ev);
+    };
+    this.endDrag = finish;
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);

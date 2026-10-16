@@ -33,21 +33,30 @@ body {
   color: var(--ink);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
-  overflow-x: auto;
+  overflow-x: hidden;
 }
+/* paint the safe-area band above the sticky host bar */
+body::before { content: ''; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 41; background: #111217; }
 button { font: inherit; color: inherit; }
-main { padding: 14px 12px 40px; }
+main {
+  padding-block: 14px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow-x: auto; /* the rack scrolls sideways inside main when zoomed in */
+}
 
 /* ------------------------------------------------------------- host bar */
 .hostbar {
   position: sticky;
-  top: 0;
+  top: env(safe-area-inset-top, 0px);
   z-index: 40;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 18px;
-  padding: 9px 14px;
+  padding-block: 9px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: linear-gradient(#1c1e25, #111217);
   border-bottom: 1px solid #000;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
@@ -524,7 +533,7 @@ body.delete-mode .rack { cursor: not-allowed; }
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }
 @media (max-width: 760px) {
-  .hostbar { position: static; gap: 8px 12px; padding: 8px 10px; }
+  .hostbar { position: static; gap: 8px 12px; padding-block: 8px; }
   .hb-master { flex-wrap: wrap; }
-  main { padding: 10px 8px 30px; }
+  main { padding-block: 10px 30px; }
 }

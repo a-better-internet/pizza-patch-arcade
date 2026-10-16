@@ -47,6 +47,8 @@ export class FeedbackTamer extends ModuleBase {
     this.runUp = smoothCoef(1.5, sr);
     this.runDown = smoothCoef(3, sr);
     this.minGain = 1;
+    this.sumL = new Float32Array(64);
+    this.sumR = new Float32Array(64);
   }
 
   reset() {
@@ -69,10 +71,9 @@ export class FeedbackTamer extends ModuleBase {
 
   process() {
     const p = this.p, sr = this.sr;
-    const c = this.inConnected, I = this.in;
-    const pick = (a, b) => (c[a] || !c[b] ? I[a] : I[b]);
-    const a1L = pick('in1L', 'in1R'), a1R = pick('in1R', 'in1L');
-    const a2L = pick('in2L', 'in2R'), a2R = pick('in2R', 'in2L');
+    const sL = this.sumL, sR = this.sumR;
+    this.readPair('in1L', 'in1R', sL, sR);
+    this.readPair('in2L', 'in2R', sL, sR, true);
     const thrDb = tamerThreshDb(p.thresh);
     const thr = dbToGain(thrDb);
     const knee = p.soft * 24;
@@ -112,8 +113,8 @@ export class FeedbackTamer extends ModuleBase {
     const oL = this.cur.out1L, oR = this.cur.out1R;
     const dk = this.domBand >= 0 ? this.domBand : 0;
     for (let n = 0; n < 64; n++) {
-      let l = a1L[n] + a2L[n];
-      let r = a1R[n] + a2R[n];
+      let l = sL[n];
+      let r = sR[n];
       const mono = 0.5 * (l + r);
       for (let k = 0; k < this.det.length; k++) {
         const d = this.det[k];

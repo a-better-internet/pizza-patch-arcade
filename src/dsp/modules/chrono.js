@@ -15,8 +15,7 @@ export class ChronoShredder extends Effect {
   constructor(engine, spec) {
     super(engine, spec);
     const sr = this.sr;
-    this.size = 4 * sr;
-    this.buf = [new RecordBuffer(this.size), new RecordBuffer(this.size)];
+    this.buf = [new RecordBuffer(6 * sr), new RecordBuffer(6 * sr)];
     this.size = this.buf[0].size;
     this.grains = Array.from({ length: 5 }, () => new Grain());
     this.ptr = -0.06 * sr;
@@ -49,11 +48,15 @@ export class ChronoShredder extends Effect {
     const rate = Math.pow(2, ((p.pitch - 0.5) * 24) / 12);
     const rev = rng.next() < p.reverse + this.loop * 0.6 * (1 - p.reverse);
     const inc = rev ? -rate : rate;
+    // a grain must fit between the oldest sample and the write head even at
+    // extreme length / pitch / tempo combinations
+    const span = Math.abs(1 - inc);
+    if (span > 0) G = Math.min(G, Math.floor((this.size - 64) / span));
     let start = this.ptr - rng.next() * p.spray * 0.6 * sr;
     if (rev) start += rate * G; // reversed grains read the same region backwards
     const hi = inc > 1 ? wpos - 4 - G * (inc - 1) : wpos - 4;
     const lo = inc < 1 ? wpos - this.size + 4 + G * (1 - inc) : wpos - this.size + 4;
-    g.pos = clamp(start, lo, hi);
+    g.pos = lo <= hi ? clamp(start, lo, hi) : hi;
     g.inc = inc;
     g.len = G;
     g.t = 0;
@@ -84,7 +87,7 @@ export class ChronoShredder extends Effect {
     this.stall += ((this.stallT > 0 ? 1 : 0) - this.stall) * 0.08;
     const speed = Math.max(0, (1 - 0.9 * p.stretch) * (1 + p.stretch * 0.3 * this.flut) * (1 - 0.9 * this.stall));
     const minLag = 0.05 * sr;
-    const maxLag = this.size * 0.55;
+    const maxLag = Math.min(this.size * 0.55, 2.2 * sr); // how far back a stretched read may wander
     const fbAmt = 0.85 * p.fdbk;
     const bufL = this.buf[0], bufR = this.buf[1];
     let beat = eng.beat;

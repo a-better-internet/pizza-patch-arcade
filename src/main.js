@@ -207,11 +207,23 @@ const handlers = {
     loadPreset(PRESETS[settings.presetIndex]);
   },
   onLoadFile: () => $('#patch-file').click(),
-  onSaveFile: () => {
-    const blob = new Blob([JSON.stringify(model.toJSON(), null, 2)], { type: 'application/json' });
+  onSaveFile: async () => {
+    const json = JSON.stringify(model.toJSON(), null, 2);
+    const filename = `${(model.name || 'patch').replace(/[^\w\- ]+/g, '').trim() || 'patch'}.patcharcade.json`;
+    // inside a claude.ai artifact, downloads go through the viewer's save prompt
+    const dl = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dl) {
+      try {
+        await dl.save({ filename, data: json });
+        toast('Patch saved.');
+      } catch (e) {
+        if (!e || e.code !== 'declined') toast('Saving files is not available here.', 'warn');
+      }
+      return;
+    }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${(model.name || 'patch').replace(/[^\w\- ]+/g, '').trim() || 'patch'}.patcharcade.json`;
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
@@ -260,8 +272,15 @@ const cableOpacity = (v) => v;
 let saveTimer = 0;
 function persist() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => saveStore({ patch: model.toJSON(), settings }), 400);
+  saveTimer = setTimeout(flushSave, 400);
 }
+function flushSave() {
+  clearTimeout(saveTimer);
+  saveStore({ patch: model.toJSON(), settings });
+}
+// never lose the last tweak to the debounce when the tab closes or reloads
+window.addEventListener('pagehide', flushSave);
+document.addEventListener('visibilitychange', () => document.hidden && flushSave());
 
 model.on((type, d) => {
   switch (type) {
@@ -274,7 +293,9 @@ model.on((type, d) => {
       audio.send({ type: 'param', m: d.m, p: d.p, v: d.v });
       break;
     case 'params':
+      // dice rolls change knobs and toggles (Sync, Tune, Freeze) together
       audio.send({ type: 'params', values: model.params });
+      for (const m in model.buttons) for (const b in model.buttons[m]) audio.send({ type: 'button', m, b, v: model.buttons[m][b] });
       refreshControls();
       break;
     case 'button':
@@ -315,6 +336,8 @@ function buildHostBar() {
     const sel = document.createElement('select');
     sel.id = `src${h}`;
     for (const s of HOST_SOURCES) {
+      // published artifacts cannot open the microphone
+      if (s.id === 'mic' && globalThis.__PA_ARTIFACT__) continue;
       const o = document.createElement('option');
       o.value = s.id;
       o.textContent = s.label;
@@ -431,6 +454,12 @@ function bindHostBar() {
       toast(`Could not load patch: ${err.message}`, 'error');
     }
   });
+  // closing the file picker without choosing fires `cancel`, not `change`
+  $('#audio-file').addEventListener('cancel', () => {
+    const h = pendingFileHost;
+    pendingFileHost = -1;
+    if (h >= 0) hostSelects[h].value = settings.sources[h];
+  });
   $('#audio-file').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -457,7 +486,9 @@ function currentScale() {
 }
 function setZoom(z) {
   settings.zoom = z;
-  const avail = Math.max(320, document.documentElement.clientWidth - 24);
+  const main = $('main');
+  const cs = window.getComputedStyle(main);
+  const avail = Math.max(300, main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   scale = z === 'fit' ? Math.min(1.25, avail / RACK_W) : Math.max(0.4, Math.min(1.6, z));
   const wrap = $('#rack-wrap');
   rackEl.style.transform = `scale(${scale})`;

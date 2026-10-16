@@ -20,6 +20,9 @@ export class ReactorFM extends Effect {
     this.env = new Env(sr, 0.003, 0.12);
     this.ph = 0;
     this.e = 0;
+    this.modL = new Float32Array(64);
+    this.modR = new Float32Array(64);
+    this.extW = 0;
   }
 
   reset() {
@@ -31,10 +34,12 @@ export class ReactorFM extends Effect {
 
   processWet(inL, inR, wetL, wetR) {
     const p = this.p, sr = this.sr;
-    const c = this.inConnected;
-    const extMod = c.in2L || c.in2R;
-    const mL = c.in2L || !c.in2R ? this.in.in2L : this.in.in2R;
-    const mR = c.in2R || !c.in2L ? this.in.in2R : this.in.in2L;
+    // Mod input replaces the internal oscillator, crossfaded with the cable fade
+    this.readPair('in2L', 'in2R', this.modL, this.modR);
+    const mL = this.modL, mR = this.modR;
+    const w0 = this.extW, w1 = this.pairWeight('in2L', 'in2R');
+    this.extW = w1;
+    const extMod = w1 > 0 || w0 > 0;
     const hz = expMap(p.freq, 20, 4000);
     const drive = 1 + p.mod * 8;
     const dnorm = 1 / sat(drive);
@@ -42,7 +47,7 @@ export class ReactorFM extends Effect {
     const am = p.am;
     const maxDev = this.D0 - 3;
     // high modulator frequencies get a smaller index so deep FM stays musical
-    const idxScale = extMod ? 1 : Math.min(1, Math.sqrt(600 / hz));
+    const idxScale = Math.min(1, Math.sqrt(600 / hz)) * (1 - w1) + w1;
     const depth = Math.min(maxDev, 0.0012 * sr * p.fm * p.fm * idxScale);
     const ins = [inL, inR], outs = [wetL, wetR];
     for (let i = 0; i < 64; i++) {
@@ -56,7 +61,8 @@ export class ReactorFM extends Effect {
       const scale = envAmt < 0 ? 1 + envAmt * ev : 1 + envAmt * ev * 1.5;
       const dev = clamp(depth * scale, 0, maxDev);
       for (let ch = 0; ch < 2; ch++) {
-        let m = extMod ? (ch === 0 ? mL[i] : mR[i]) * 2 : osc;
+        const w = w0 + ((w1 - w0) * i) / 64;
+        let m = extMod ? osc * (1 - w) + (ch === 0 ? mL[i] : mR[i]) * 2 * w : osc;
         m = this.modLp[ch].process(sat(m * drive) * dnorm);
         const x = ins[ch][i];
         const dl = this.dl[ch];

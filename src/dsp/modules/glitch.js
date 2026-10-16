@@ -20,7 +20,8 @@ export class GlitchOracle extends Effect {
   constructor(engine, spec) {
     super(engine, spec);
     const sr = this.sr;
-    this.buf = [new RecordBuffer(sr * 2.6), new RecordBuffer(sr * 2.6)];
+    // a 2 s glitch played backwards at 1.5x reaches 5 s behind the write head
+    this.buf = [new RecordBuffer(sr * 5.5), new RecordBuffer(sr * 5.5)];
     this.lastStep = -1;
     this.pattern = euclid(0, STEPS, 0);
     this.patKey = '';
