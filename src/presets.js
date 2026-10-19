@@ -1,5 +1,16 @@
-// Factory patches. Each builds on the shared trunk (mixer -> tamer -> To Host),
-// suggests demo sources for the From Host inputs and sets a tempo.
+// Factory patches. Each builds on the shared trunk (mixer -> tamer -> To Host).
+//
+// The no-input patches come first. They have no source at all: each From Host
+// carries only the one-sample impulse sent by Strike, and every sound after that
+// is a feedback network listening to itself. Each sets the three conditions the
+// sound must satisfy to exist (Life, Breath, Unrest, see src/dsp/ecology.js).
+// tests/presets.test.mjs checks that every one of them comes alive from a single
+// impulse, is still alive a minute later, keeps changing, and never hisses,
+// shrills or clips.
+//
+// The "Input FX" patches that follow use the rack as an effect for the demo
+// instruments or your own input. They set Life to 0, so their loops only bloom
+// while something feeds them.
 
 import { expMap } from './spec.js';
 
@@ -34,7 +45,400 @@ const glitchDur = { '1/32': step(0, 5), '1/16': step(1, 5), '1/8': step(2, 5), '
 const patt = (n) => step(n - 1, 100);
 void expMap;
 
-export const PRESETS = [
+const IMPULSE = ['impulse', 'impulse', 'impulse'];
+const conditions = (life, breath, unrest) => (m) => Object.assign(m.globals, { life, breath, unrest });
+
+// ------------------------------------------------------------------ no input
+const NO_INPUT = [
+  // ----------------------------------------------------------------- seeds
+  {
+    name: 'First Light',
+    desc: 'One impulse, one loop: an echo and a ghost listening to each other.',
+    category: 'Seeds',
+    bpm: 90,
+    conditions: [0.6, 0.5, 0.4],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'echoforge.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      setAll(m, 'echoforge', { rate: echo32(6), density: 0.45, diffuse: 0.5, fdbk: 0.35, spread: 0.7, mix: 0.5 });
+      setAll(m, 'ghost', { decay: 0.5, blur: 0.45, shimmer: 0.15, time: ghostTime(0.33), width: 0.6, mix: 0.5 });
+    },
+  },
+  {
+    name: 'Self-Listening',
+    desc: 'Prism patched into itself. When it howls, the howl moves its bands.',
+    category: 'Seeds',
+    bpm: 90,
+    conditions: [0.55, 0.45, 0.5],
+    build(m) {
+      wire(m, 'host.from1L', 'prism.in1L');
+      wire(m, 'prism.out2L', 'prism.in2L');
+      wire(m, 'prism.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'tamer.cvout:howl', 'prism.cv:bands');
+      setAll(m, 'prism', { bands: bandsHz(320), detune: detune.fifth, res: 0.55, morph: 0.4, sep: 0.3, spread: 0.6, mix: 0.8 });
+      setAll(m, 'ghost', { decay: 0.45, blur: 0.6, shimmer: 0.1, time: ghostTime(0.25), mix: 0.4 });
+      setAll(m, 'mixer', { fader1: 1 });
+      setAll(m, 'tamer', { focus: 0.55 });
+    },
+  },
+  {
+    name: 'Tape Organism',
+    desc: 'A tape loop that never stops: its own wow and flutter steer the echo.',
+    category: 'Seeds',
+    bpm: 84,
+    conditions: [0.6, 0.55, 0.35],
+    build(m) {
+      wire(m, 'host.from1L', 'tape.in1L');
+      wire(m, 'tape.out1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out2L', 'tape.in2L');
+      wire(m, 'echoforge.out1L', 'mixer.ch1L');
+      wire(m, 'tape.cvout:wowflut', 'echoforge.cv:diffuse');
+      setAll(m, 'tape', { wear: 0.45, wow: 0.5, flutter: 0.3, age: 0.5, memory: 0.25, mix: 0.9 });
+      setAll(m, 'echoforge', { rate: echo32(8), density: 0.35, diffuse: 0.4, fdbk: 0.3, spread: 0.6, mix: 0.55 });
+    },
+  },
+  {
+    name: 'Howl & Hush',
+    desc: 'Fold, filter, return. The louder it howls, the more it thins itself.',
+    category: 'Seeds',
+    bpm: 96,
+    conditions: [0.6, 0.6, 0.45],
+    build(m) {
+      wire(m, 'host.from1L', 'overmind.in1L');
+      wire(m, 'overmind.out1L', 'prism.in1L');
+      wire(m, 'prism.out1L', 'subverter.in1L');
+      wire(m, 'subverter.out2L', 'overmind.in2L');
+      wire(m, 'subverter.out1L', 'mixer.ch1L');
+      wire(m, 'tamer.cvout:howl', 'subverter.cv:hp');
+      setAll(m, 'overmind', { shape: 0.3, fold: 0.35, drive: 0.25, char: 0.2, mix: 0.5 });
+      setAll(m, 'prism', { bands: bandsHz(500), res: 0.5, morph: 0.35, detune: detune.octave, mix: 0.8 });
+      setAll(m, 'subverter', { width: 0.7, hp: 0.2, move: 0.25, mix: 1 });
+      setAll(m, 'tamer', { focus: 0.6 });
+    },
+  },
+  // ------------------------------------------------------------ ecosystems
+  {
+    name: 'Tangle',
+    desc: 'Three modules, two loops, one knot. Grains blur the ghost that feeds them.',
+    category: 'Ecosystems',
+    bpm: 92,
+    conditions: [0.6, 0.5, 0.5],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'chrono.in1L');
+      wire(m, 'chrono.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'echoforge.in2L');
+      wire(m, 'chrono.out2L', 'chrono.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'chrono.out1L', 'mixer.ch2L');
+      wire(m, 'chrono.cvout:spray', 'ghost.cv:blur');
+      wire(m, 'drift.cvout:walk', 'echoforge.cv:density');
+      setAll(m, 'echoforge', { rate: echo32(5), density: 0.4, diffuse: 0.55, fdbk: 0.3, mix: 0.5 });
+      setAll(m, 'chrono', { stretch: 0.45, reverse: 0.35, grain: grain['1/8'], spray: 0.4, fdbk: 0.2, pitch: semis(0), mix: 0.5 });
+      setAll(m, 'ghost', { decay: 0.45, blur: 0.5, shimmer: 0.12, time: ghostTime(0.3), mix: 0.5 });
+      setAll(m, 'drift', { rate: 0.2, depth: 0.4, smooth: 0.85 });
+      setAll(m, 'mixer', { fader2: 0.62, pan1: 0.35, pan2: 0.68 });
+    },
+  },
+  {
+    name: 'Chaos Garden',
+    desc: 'Bloom and FM watch each other through their own envelopes.',
+    category: 'Ecosystems',
+    bpm: 100,
+    conditions: [0.55, 0.55, 0.5],
+    build(m) {
+      wire(m, 'host.from1L', 'bloom.in1L');
+      wire(m, 'bloom.out1L', 'reactor.in1L');
+      wire(m, 'reactor.out2L', 'bloom.in2L');
+      wire(m, 'reactor.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'reactor.cvout:env', 'bloom.cv:color');
+      wire(m, 'bloom.cvout:bloom', 'reactor.cv:fm');
+      wire(m, 'drift.cvout:walk', 'reactor.cv:freq');
+      setAll(m, 'bloom', { color: bloomHz(110), density: 0.6, bloom: 0.5, reverb: 0.4, texture: 0.4, harm: 0.25, mix: 0.6 });
+      setAll(m, 'reactor', { freq: fmHz(140), fm: 0.3, mod: 0.25, env: 0.6, mix: 0.6 });
+      setAll(m, 'ghost', { decay: 0.4, blur: 0.5, shimmer: 0.1, time: ghostTime(0.28), mix: 0.35 });
+      setAll(m, 'drift', { rate: 0.15, depth: 0.35, smooth: 0.9, chaos: 0.3 });
+    },
+  },
+  {
+    name: 'Pressure System',
+    desc: 'Echo and bloom trade a slow front of air; each one sets the other\'s density.',
+    category: 'Ecosystems',
+    bpm: 76,
+    conditions: [0.6, 0.75, 0.35],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'bloom.in1L');
+      wire(m, 'bloom.out2L', 'echoforge.in2L');
+      wire(m, 'bloom.out1L', 'mixer.ch1L');
+      wire(m, 'bloom.cvout:bloom', 'echoforge.cv:density');
+      wire(m, 'drift.cvout:walk', 'bloom.cv:reverb');
+      setAll(m, 'echoforge', { rate: echo32(12), density: 0.5, diffuse: 0.75, fdbk: 0.4, spread: 0.75, mix: 0.6 });
+      setAll(m, 'bloom', { color: bloomHz(82), density: 0.55, bloom: 0.7, reverb: 0.55, texture: 0.3, harm: 0.15, mix: 0.6 });
+      setAll(m, 'drift', { rate: 0.1, depth: 0.45, smooth: 0.95 });
+    },
+  },
+  {
+    name: 'Granular Weather',
+    desc: 'Grains scatter through a ghost; their spray turns the ghost\'s pitch.',
+    category: 'Ecosystems',
+    bpm: 88,
+    conditions: [0.6, 0.6, 0.45],
+    build(m) {
+      wire(m, 'host.from1L', 'chrono.in1L');
+      wire(m, 'chrono.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'chrono.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'chrono.cvout:spray', 'ghost.cv:pitch');
+      wire(m, 'drift.cvout:walk', 'chrono.cv:spray');
+      setAll(m, 'chrono', { stretch: 0.6, reverse: 0.4, grain: grain['1/16'], spray: 0.45, fdbk: 0.2, pitch: semis(-5), mix: 0.6 });
+      setAll(m, 'ghost', { decay: 0.5, blur: 0.65, shimmer: 0.2, pitch: 0.25, time: ghostTime(0.4), width: 0.7, mix: 0.5 });
+      setAll(m, 'drift', { rate: 0.25, depth: 0.4, smooth: 0.8, chaos: 0.2 });
+    },
+  },
+  {
+    name: 'Mid/Side Organism',
+    desc: 'The loop\'s own side energy widens and narrows the echo that feeds it.',
+    category: 'Ecosystems',
+    bpm: 90,
+    conditions: [0.6, 0.5, 0.4],
+    build(m) {
+      wire(m, 'host.from1L', 'subverter.in1L');
+      wire(m, 'subverter.out1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out2L', 'subverter.in2L');
+      wire(m, 'echoforge.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'subverter.cvout:side', 'echoforge.cv:spread');
+      wire(m, 'subverter.cvout:mid', 'ghost.cv:width');
+      setAll(m, 'subverter', { width: 0.8, polarity: 0.3, symmetry: 0.2, move: 0.45, hp: 0.3, mix: 1 });
+      setAll(m, 'echoforge', { rate: echo32(7), density: 0.45, diffuse: 0.5, fdbk: 0.3, spread: 0.5, mix: 0.55 });
+      setAll(m, 'ghost', { decay: 0.4, blur: 0.5, shimmer: 0.1, time: ghostTime(0.22), width: 0.5, mix: 0.4 });
+    },
+  },
+  {
+    name: 'Probability Weather',
+    desc: 'A gate decides, step by step, whether the loop may hear itself.',
+    category: 'Ecosystems',
+    bpm: 104,
+    conditions: [0.65, 0.4, 0.4],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'pgate.in1L');
+      wire(m, 'pgate.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'echoforge.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'pgate.cvout:gate', 'ghost.cv:shimmer');
+      wire(m, 'drift.cvout:walk', 'pgate.cv:prob');
+      setAll(m, 'echoforge', { rate: echo32(3), density: 0.35, diffuse: 0.4, fdbk: 0.35, spread: 0.7, mix: 0.5 });
+      setAll(m, 'pgate', { prob: 0.55, mode: 0, rate: gateRate['1/8'], swing: 0.2, patt: patt(17), mix: 1 });
+      setAll(m, 'ghost', { decay: 0.55, blur: 0.4, shimmer: 0.1, time: ghostTime(0.36), mix: 0.45 });
+      setAll(m, 'drift', { rate: 0.3, depth: 0.35, smooth: 0.7 });
+      m.buttons.drift.sync = true;
+    },
+  },
+  {
+    name: 'Resonator Choir',
+    desc: 'Twin resonant bands in fifths sing into a ghost and back.',
+    category: 'Ecosystems',
+    bpm: 72,
+    conditions: [0.55, 0.65, 0.55],
+    build(m) {
+      wire(m, 'host.from1L', 'prism.in1L');
+      wire(m, 'prism.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'prism.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'orbit.cvout:x', 'prism.cv:bands');
+      wire(m, 'tamer.cvout:howl', 'ghost.cv:blur');
+      setAll(m, 'prism', { bands: bandsHz(440), detune: detune.fifth, res: 0.6, morph: 0.45, sep: 0.35, spread: 0.65, mix: 0.85 });
+      setAll(m, 'ghost', { decay: 0.55, blur: 0.5, shimmer: 0.25, time: ghostTime(0.45), width: 0.7, mix: 0.5 });
+      setAll(m, 'orbit', { rate: lfoHz(0.03), radius: 0.3, shape: 0.1 });
+      setAll(m, 'mixer', { fader1: 1 });
+      setAll(m, 'tamer', { focus: 0.6 });
+    },
+  },
+  // -------------------------------------------------------------- machines
+  {
+    name: 'Glitch Colony',
+    desc: 'Euclidean glitches inside an echo loop; each glitch stirs the diffusion.',
+    category: 'Machines',
+    bpm: 112,
+    conditions: [0.6, 0.4, 0.45],
+    build(m) {
+      wire(m, 'host.from1L', 'glitch.in1L');
+      wire(m, 'glitch.out1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out2L', 'glitch.in2L');
+      wire(m, 'echoforge.out1L', 'mixer.ch1L');
+      wire(m, 'glitch.cvout:gate', 'echoforge.cv:diffuse');
+      setAll(m, 'glitch', { chance: 0.3, intense: 0.5, dur: glitchDur['1/16'], muta: 0.3, intel: 0.2, mix: 1 });
+      setAll(m, 'echoforge', { rate: echo32(3), density: 0.3, diffuse: 0.3, fdbk: 0.35, spread: 0.65, mix: 0.5 });
+    },
+  },
+  {
+    name: 'Metal Lung',
+    desc: 'A resonant filter phase-modulating itself: a struck plate that keeps inhaling.',
+    category: 'Machines',
+    bpm: 96,
+    conditions: [0.55, 0.7, 0.6],
+    build(m) {
+      wire(m, 'host.from1L', 'prism.in1L');
+      wire(m, 'prism.out1L', 'reactor.in1L');
+      wire(m, 'reactor.out2L', 'prism.in2L');
+      wire(m, 'prism.out2L', 'reactor.in2L'); // the plate also phase-modulates itself
+      wire(m, 'reactor.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'reactor.cvout:env', 'prism.cv:bands');
+      setAll(m, 'reactor', { freq: fmHz(310), fm: 0.4, am: 0.15, mod: 0.3, env: 0.4, mix: 0.6 });
+      setAll(m, 'prism', { bands: bandsHz(700), detune: detune.M3, res: 0.65, morph: 0.5, sep: 0.4, mix: 0.8 });
+      setAll(m, 'ghost', { decay: 0.4, blur: 0.4, shimmer: 0.1, time: ghostTime(0.2), mix: 0.35 });
+      setAll(m, 'mixer', { fader1: 0.95 });
+    },
+  },
+  {
+    name: 'Orbit Mechanics',
+    desc: 'A tape and echo loop held in a slow orbit: X bends the tape, Y swings the echo.',
+    category: 'Machines',
+    bpm: 100,
+    conditions: [0.6, 0.45, 0.4],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'tape.in1L');
+      wire(m, 'tape.out2L', 'echoforge.in2L');
+      wire(m, 'tape.out1L', 'mixer.ch1L');
+      wire(m, 'orbit.cvout:x', 'tape.cv:wow');
+      wire(m, 'orbit.cvout:y', 'echoforge.cv:spread');
+      setAll(m, 'echoforge', { rate: echo32(6), density: 0.4, diffuse: 0.45, fdbk: 0.35, spread: 0.5, mix: 0.55 });
+      setAll(m, 'tape', { wear: 0.35, wow: 0.3, flutter: 0.2, age: 0.35, memory: 0.15, mix: 0.85 });
+      setAll(m, 'orbit', { rate: lfoHz(0.08), radius: 0.5, shape: 0.05, gravity: 0.3 });
+    },
+  },
+  {
+    name: 'Fold Ecology',
+    desc: 'A wavefolder and a stereo field trade harmonics; the side signal sets the fold.',
+    category: 'Machines',
+    bpm: 108,
+    conditions: [0.5, 0.55, 0.55],
+    build(m) {
+      wire(m, 'host.from1L', 'overmind.in1L');
+      wire(m, 'overmind.out1L', 'subverter.in1L');
+      wire(m, 'subverter.out2L', 'overmind.in2L');
+      wire(m, 'subverter.out1L', 'prism.in1L');
+      wire(m, 'prism.out1L', 'mixer.ch1L');
+      wire(m, 'subverter.cvout:side', 'overmind.cv:fold');
+      setAll(m, 'overmind', { shape: 0.5, fold: 0.3, drive: 0.2, harm: 0.25, char: 0.15, mix: 0.45 });
+      setAll(m, 'subverter', { width: 0.75, polarity: 0.5, symmetry: 0.3, move: 0.35, hp: 0.3, mix: 1 });
+      setAll(m, 'prism', { bands: bandsHz(1200), morph: 0.1, res: 0.3, mix: 1 });
+    },
+  },
+  {
+    name: 'Vinyl Ghosts',
+    desc: 'A record that plays only its own wear: dust, tape and a ghost in a loop.',
+    category: 'Machines',
+    bpm: 82,
+    conditions: [0.55, 0.5, 0.35],
+    build(m) {
+      wire(m, 'host.from1L', 'tape.in1L');
+      wire(m, 'tape.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out1L', 'dust.in1L');
+      wire(m, 'dust.out2L', 'tape.in2L');
+      wire(m, 'dust.out1L', 'mixer.ch1L');
+      wire(m, 'dust.cvout:crack', 'ghost.cv:blur');
+      setAll(m, 'tape', { wear: 0.5, wow: 0.4, flutter: 0.25, age: 0.6, memory: 0.2, mix: 0.9 });
+      setAll(m, 'ghost', { decay: 0.5, blur: 0.5, shimmer: 0.1, time: ghostTime(0.3), mix: 0.5 });
+      setAll(m, 'dust', { wear: 0.1, dust: 0.12, comp: 0.3, warp: 0.5, mix: 0.6 });
+    },
+  },
+  // ---------------------------------------------------------------- drones
+  {
+    name: 'Dark Matter',
+    desc: 'A low bloom held in a dark room. Slow, deep, almost still.',
+    category: 'Drones',
+    bpm: 60,
+    conditions: [0.55, 0.3, 0.25],
+    build(m) {
+      wire(m, 'host.from1L', 'bloom.in1L');
+      wire(m, 'bloom.out1L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'bloom.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch1L');
+      wire(m, 'drift.cvout:walk', 'bloom.cv:color');
+      setAll(m, 'bloom', { color: bloomHz(98), density: 0.7, bloom: 0.8, reverb: 0.6, texture: 0.3, harm: 0.3, mix: 0.7 });
+      setAll(m, 'ghost', { decay: 0.6, blur: 0.75, shimmer: 0, pitch: 0, time: ghostTime(0.6), width: 0.8, mix: 0.55 });
+      setAll(m, 'drift', { rate: 0.05, depth: 0.25, smooth: 1 });
+    },
+  },
+  {
+    name: 'Breathing Bloom',
+    desc: 'Static Bloom patched into itself, Breath turned deep: it inhales for half a minute.',
+    category: 'Drones',
+    bpm: 70,
+    conditions: [0.6, 0.9, 0.3],
+    build(m) {
+      wire(m, 'host.from1L', 'bloom.in1L');
+      wire(m, 'bloom.out2L', 'bloom.in2L');
+      wire(m, 'bloom.out1L', 'mixer.ch1L');
+      wire(m, 'bloom.cvout:bloom', 'bloom.cv:texture');
+      setAll(m, 'bloom', { color: bloomHz(147), density: 0.6, bloom: 0.65, reverb: 0.5, texture: 0.3, harm: 0.2, mix: 0.65 });
+    },
+  },
+  {
+    name: 'Resonant Lattice',
+    desc: 'Short dense echoes and a detuned filter form a lattice that keeps reshaping.',
+    category: 'Drones',
+    bpm: 66,
+    conditions: [0.55, 0.5, 0.8],
+    build(m) {
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out1L', 'prism.in1L');
+      wire(m, 'prism.out2L', 'echoforge.in2L');
+      wire(m, 'prism.out1L', 'mixer.ch1L');
+      wire(m, 'drift.cvout:walk', 'prism.cv:bands');
+      setAll(m, 'echoforge', { rate: echo32(1), density: 0.85, diffuse: 0.65, fdbk: 0.45, spread: 0.6, mix: 0.6 });
+      setAll(m, 'prism', { bands: bandsHz(260), detune: detune.fourth, res: 0.55, morph: 0.3, sep: 0.4, spread: 0.6, mix: 0.8 });
+      setAll(m, 'drift', { rate: 0.08, depth: 0.3, smooth: 0.95 });
+      setAll(m, 'mixer', { fader1: 0.95 });
+    },
+  },
+  {
+    name: 'Two Rooms',
+    desc: 'Two separate loops, left and right, listening to each other through a wall.',
+    category: 'Drones',
+    bpm: 72,
+    conditions: [0.6, 0.6, 0.4],
+    build(m) {
+      // room one: an echo into itself
+      wire(m, 'host.from1L', 'echoforge.in1L');
+      wire(m, 'echoforge.out2L', 'echoforge.in2L');
+      wire(m, 'echoforge.out1L', 'mixer.ch1L');
+      // room two: a ghost into itself
+      wire(m, 'host.from2L', 'ghost.in1L');
+      wire(m, 'ghost.out2L', 'ghost.in2L');
+      wire(m, 'ghost.out1L', 'mixer.ch2L');
+      // the wall: each room's energy moves the other room's air
+      wire(m, 'ghost.out1L', 'bloom.in1L');
+      wire(m, 'bloom.cvout:bloom', 'echoforge.cv:diffuse');
+      wire(m, 'echoforge.out1L', 'tape.in1L');
+      wire(m, 'tape.cvout:wowflut', 'ghost.cv:pitch');
+      setAll(m, 'echoforge', { rate: echo32(9), density: 0.55, diffuse: 0.55, fdbk: 0.35, spread: 0.4, mix: 0.6 });
+      setAll(m, 'ghost', { decay: 0.55, blur: 0.6, shimmer: 0.2, time: ghostTime(0.5), width: 0.4, mix: 0.6 });
+      setAll(m, 'bloom', { mix: 1 });
+      setAll(m, 'tape', { wow: 0.4, flutter: 0.2 });
+      setAll(m, 'mixer', { pan1: 0.15, pan2: 0.85 });
+    },
+  },
+].map((p) => ({ ...p, sources: IMPULSE, build: chain(conditions(...p.conditions), p.build) }));
+
+function chain(a, b) {
+  return (m) => {
+    a(m);
+    b(m);
+  };
+}
+
+// --------------------------------------------------------------- input FX
+const INPUT_FX = [
   {
     name: 'Warm Start',
     desc: 'Keys through a worn tape machine into a soft, diffused echo.',
@@ -516,9 +920,17 @@ export const PRESETS = [
   },
 ];
 
-export const CATEGORIES = ['Starters', 'Ambient', 'Lo-fi', 'Rhythm', 'Sound Design', 'Feedback'];
-// keep the ◀ ▶ order grouped by category (stable, so Warm Start stays first)
-PRESETS.sort((a, b) => CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category));
+const FX_ORDER = ['Starters', 'Ambient', 'Lo-fi', 'Rhythm', 'Sound Design', 'Feedback'];
+// keep the input patches in their old order (stable, so Warm Start stays first)
+INPUT_FX.sort((a, b) => FX_ORDER.indexOf(a.category) - FX_ORDER.indexOf(b.category));
+
+export const CATEGORIES = ['Seeds', 'Ecosystems', 'Machines', 'Drones', 'Input FX'];
+
+export const PRESETS = [
+  ...NO_INPUT,
+  // their loops only bloom while the input feeds them
+  ...INPUT_FX.map((p) => ({ ...p, category: 'Input FX', sources: p.sources, build: chain(conditions(0, 0.5, 0.4), p.build) })),
+];
 
 export function applyPreset(model, preset) {
   model.load({ name: preset.name, cables: [] });

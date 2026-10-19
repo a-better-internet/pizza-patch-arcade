@@ -61,7 +61,9 @@ export class Echoforge extends Effect {
       let t = this.time[c], ph = this.ph[c];
       fzg = this.freezeG;
       for (let i = 0; i < 64; i++) {
-        t += (tgt[c] - t) * this.glide;
+        // glide, slew-limited so a jumpy Rate CV bends the pitch by a few
+        // semitones at most instead of scattering it into noise
+        t += clamp((tgt[c] - t) * this.glide, -0.25, 0.25);
         ph += rates[c];
         if (ph >= 1) ph -= 1;
         fzg += (fzTarget - fzg) * this.fz;

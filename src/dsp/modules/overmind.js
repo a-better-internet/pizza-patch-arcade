@@ -72,6 +72,7 @@ export class Overmind extends Effect {
     for (const f of this.lp) f.reset();
     for (const f of this.post) f.reset();
     this.env.reset();
+    this.hold[0] = this.hold[1] = 0;
     this.rIn = this.rOut = 0;
     this.makeup = 0.5;
   }
@@ -115,8 +116,10 @@ export class Overmind extends Effect {
       // a slowly moving Bias, Harmonics or loop mutation can never leak through
       const zero = shapeCurve(bias, fold, zoneA, a, harm);
       for (let c = 0; c < 2; c++) {
-        const up = this.os[c].upsample(ins[c][i] * drive + bias);
-        for (let k = 0; k < 4; k++) up[k] = shapeCurve(up[k], fold, zoneA, a, harm) - zero;
+        // bias is added after upsampling (the same thing in steady state), so a
+        // freshly reset oversampler never turns it into a step that leaks out
+        const up = this.os[c].upsample(ins[c][i] * drive);
+        for (let k = 0; k < 4; k++) up[k] = shapeCurve(up[k] + bias, fold, zoneA, a, harm) - zero;
         let y = this.os[c].downsample(up);
         y = this.dc[c].process(y);
         if (decim < 1) {

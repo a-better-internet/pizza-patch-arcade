@@ -14,7 +14,7 @@ export function applyModel(engine, model) {
   engine.setPatch(model.cables);
   for (const m in model.params) for (const p in model.params[m]) engine.setParam(m, p, model.params[m][p]);
   for (const m in model.buttons) for (const b in model.buttons[m]) engine.setButton(m, b, model.buttons[m][b]);
-  engine.setGlobal('mix', model.globals.mix);
+  for (const k of ['mix', 'life', 'breath', 'unrest']) engine.setGlobal(k, model.globals[k]);
 }
 
 // Test signal generators (stereo, block-wise).
@@ -152,6 +152,22 @@ export function spectrum(buf, size = 4096) {
   }
   for (let k = 0; k < size / 2; k++) pow[k] /= Math.max(1, frames);
   return pow;
+}
+
+// Spectral flatness (geometric / arithmetic mean of bin powers) between two
+// frequencies: about 1 for white noise, near 0 for tones. Steady hiss scores high.
+export function flatness(buf, loHz = 2000, hiHz = 10000, sr = SR) {
+  const pow = spectrum(buf);
+  const binHz = sr / (pow.length * 2);
+  let lg = 0, ar = 0, n = 0;
+  for (let k = 1; k < pow.length; k++) {
+    const f = k * binHz;
+    if (f < loHz || f > hiHz) continue;
+    lg += Math.log(pow[k] + 1e-30);
+    ar += pow[k];
+    n++;
+  }
+  return n && ar > 0 ? Math.exp(lg / n) / (ar / n) : 0;
 }
 
 // Energy above `hz` relative to total energy, in dB.

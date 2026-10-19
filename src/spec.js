@@ -332,6 +332,10 @@ export const MODULE_BY_ID = Object.fromEntries(MODULES.map((m) => [m.id, m]));
 export const HOST_ID = 'host';
 
 export const GLOBAL_PARAMS = [
+  // the conditions a sound must satisfy to exist (see src/dsp/ecology.js)
+  { id: 'life', label: 'Life', def: 0.6, fmt: (v) => (v < 0.02 ? 'off: loops need input' : `${pct(v)} · held near ${(-40 + 26 * v).toFixed(0)} dBFS`), theme: 'red', title: 'Life (how strongly loops sustain themselves)' },
+  { id: 'breath', label: 'Breath', def: 0.5, fmt: (v) => `${(34 * (1 - 0.75 * v)).toFixed(0)} s cycle · ${(3 + 21 * v).toFixed(0)} dB deep`, theme: 'cyan', title: 'Breath (how loops swell and recede)' },
+  { id: 'unrest', label: 'Unrest', def: 0.4, fmt: (v) => (v < 0.01 ? 'off' : `carves a held tone after ${expMap(1 - v, 1.5, 25).toFixed(1)} s`), theme: 'violet', title: 'Unrest (how soon a settled tone is carved away)' },
   { id: 'fdbkChance', label: 'Fdbk', def: 0.3, fmt: pct, theme: 'amber' },
   { id: 'cables', label: 'Cables', def: 1, fmt: pct, theme: 'green' },
   { id: 'mix', label: 'Mix', def: 1, fmt: pct, theme: 'blue' },

@@ -173,7 +173,7 @@ body:not(.ready) .rack { opacity: 0; }
 .bypass.bypassed .b-led { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 .patch-lcd { display: flex; align-items: center; gap: 2px; }
 .lcd {
-  width: 250px; height: 30px; padding: 0 10px;
+  width: 200px; height: 30px; padding: 0 10px;
   display: block; text-align: left; line-height: 26px; cursor: pointer;
   font-family: var(--font-mono); font-size: 15px; color: #c9b8ff;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -191,13 +191,34 @@ body:not(.ready) .rack { opacity: 0; }
 .icon-btn:hover { color: #fff; border-color: #4c515c; }
 .icon-btn svg { width: 100%; height: 100%; display: block; }
 .logo {
-  font-family: var(--font-logo); font-size: 34px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
+  font-family: var(--font-logo); font-size: 25px; letter-spacing: 0.06em; line-height: 0.95; text-align: center; text-transform: uppercase; white-space: nowrap;
   color: #8ff5ff;
   background: linear-gradient(180deg, #e8feff 10%, #49e6ff 52%, #1a8fd8 54%, #63e9ff 90%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 0 6px rgba(56, 232, 255, 0.55)) drop-shadow(0 2px 0 #062a3c);
 }
-.strip-io { display: flex; align-items: flex-end; gap: 16px; }
+.strip-io { display: flex; align-items: flex-end; gap: 14px; }
+/* Strike: the one impulse. Its ring breathes with the energy living in the loops. */
+.strike {
+  --alive: 0;
+  display: grid; justify-items: center; gap: 2px; padding: 0 0 2px; border: 0; background: transparent; cursor: pointer;
+  font-family: var(--font-cond); font-weight: 700; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #ffd6c9;
+}
+.s-ring {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: radial-gradient(circle at 40% 35%, #ff7a59, #b0261c 62%, #4c0c08);
+  border: 2px solid #1a0504;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 2px 0 rgba(0, 0, 0, 0.6),
+    0 0 calc(2px + var(--alive) * 16px) rgba(255, 110, 70, calc(0.15 + var(--alive) * 0.7));
+  transition: transform 80ms ease;
+}
+.s-ring svg { width: 20px; height: 20px; fill: none; stroke: #fff2ea; stroke-width: 2; stroke-linejoin: round; filter: drop-shadow(0 0 3px rgba(255, 220, 200, 0.8)); }
+.strike:hover .s-ring { filter: brightness(1.12); }
+.strike:active .s-ring { transform: scale(0.92); }
+.strike:focus-visible { outline: 2px solid #ffb39b; outline-offset: 2px; border-radius: 6px; }
+.strike.struck .s-ring { animation: struck 700ms ease-out; }
+@keyframes struck { 0% { box-shadow: 0 0 0 0 rgba(255, 230, 210, 0.95), 0 0 30px rgba(255, 120, 80, 1); } 100% { box-shadow: 0 0 0 22px rgba(255, 230, 210, 0), 0 0 6px rgba(255, 120, 80, 0.2); } }
 .io-title { font-family: var(--font-cond); font-weight: 700; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #c9ced8; margin-bottom: 3px; }
 .fh-row { display: flex; gap: 10px; }
 .fh { display: grid; grid-template-columns: auto; justify-items: center; position: relative; }
@@ -257,6 +278,14 @@ body:not(.ready) .rack { opacity: 0; }
   transition: opacity 300ms;
 }
 .module.looping .loop-tag { opacity: calc(0.35 + var(--loop) * 0.65); }
+/* a living loop breathes: its panels glow with the energy circulating in it */
+.module.looping.breathing {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 calc(4px + var(--loop) * 26px) rgba(255, 196, 64, calc(var(--loop) * 0.75)),
+    0 2px 0 rgba(0, 0, 0, 0.5),
+    0 0 calc(var(--breath, 0) * 18px) rgba(255, 140, 70, calc(var(--breath, 0) * 0.55));
+}
 .m-deco { position: absolute; inset: 0; pointer-events: none; }
 .m-title {
   position: absolute; left: 0; right: 0; top: 2px; margin: 0; z-index: 2;
@@ -297,6 +326,9 @@ body:not(.ready) .rack { opacity: 0; }
 .knob-cap-amber .k-body { fill: #8a4a0c; } .knob-cap-amber .k-cap { fill: #e08a2a; } .knob-cap-amber { --accent: #ffb547; }
 .knob-cap-green .k-body { fill: #0d5a2b; } .knob-cap-green .k-cap { fill: #2fbd63; } .knob-cap-green { --accent: #5dff97; }
 .knob-cap-blue .k-body { fill: #0c3a86; } .knob-cap-blue .k-cap { fill: #2f7cf0; } .knob-cap-blue { --accent: #77b4ff; }
+.knob-cap-red .k-body { fill: #7a1410; } .knob-cap-red .k-cap { fill: #e0483a; } .knob-cap-red { --accent: #ff7a64; }
+.knob-cap-cyan .k-body { fill: #0b5560; } .knob-cap-cyan .k-cap { fill: #22b8c8; } .knob-cap-cyan { --accent: #6ff1ff; }
+.knob-cap-violet .k-body { fill: #3d1d84; } .knob-cap-violet .k-cap { fill: #8b5cf0; } .knob-cap-violet { --accent: #c3a6ff; }
 .knob:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .knob.active .k-cap { stroke: var(--accent); }
 
@@ -476,6 +508,8 @@ body.delete-mode .rack { cursor: not-allowed; }
 .help::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
 .help h2 { margin: 0 0 12px; font-family: var(--font-logo); font-weight: 400; letter-spacing: 0.06em; color: #8ff5ff; }
 .help h3 { margin: 0 0 6px; font-family: var(--font-cond); letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; color: var(--yellow); }
+.help-lede { margin: 0 0 16px; max-width: 72ch; line-height: 1.55; font-size: 14px; color: #e3e6ec; }
+.help { max-height: calc(100vh - 32px); overflow: auto; }
 .help-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
 .help ul { margin: 0; padding-left: 18px; line-height: 1.5; font-size: 13.5px; color: #d6d9df; }
 .help form { margin-top: 16px; text-align: right; }

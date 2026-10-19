@@ -9,24 +9,28 @@
 //  * Cables fade in/out over 12 ms when patched or removed, so patching never
 //    clicks.
 //  * Modules that cannot reach To Host are idle and skipped.
-//  * Audio on a feedback edge passes a "cable loss" stage: DC blocker, gentle
-//    6 kHz low-pass and a soft bound. Loops therefore darken as they
-//    recirculate (they recede into a wash) instead of building fizzy harmonics.
-//  * Loop governor: delays and resonances give every loop some frequency where
-//    its gain exceeds unity, so left alone any loop would end in a saturated,
-//    self-sustaining howl. For each loop the engine compares the energy fed
-//    into it with the energy recirculating on its feedback cables. A loop may
-//    bloom to +3 dB above what feeds it but cannot keep itself alive once the
-//    input stops; it fades out over a few seconds. Opening a Splitter or
-//    Merger gain past centre inside the loop (the manual's "loop throttle")
-//    raises that allowance and permits a bounded self-sustaining bloom.
+//  * Audio on a feedback edge passes a "cable loss" stage: 80 Hz high-pass,
+//    gentle 6 kHz low-pass and a soft bound. Loops therefore darken as they
+//    recirculate (they recede into a wash) instead of building fizzy harmonics,
+//    and cannot sink into an inaudible sub-bass rumble either.
+//  * Every loop's feedback gain is managed by the loop ecology (ecology.js):
+//    Life holds each loop near a target energy so it can exist with no input
+//    at all, Breath keeps that target moving, Unrest carves away any resonance
+//    the loop settles on. A single one-sample impulse (Strike, or a cable that
+//    closes a new loop) is the only energy the instrument needs.
+//  * At Life 0 the legacy governor applies instead: a loop may bloom to +3 dB
+//    above what feeds it but fades once the input stops (a Splitter or Merger
+//    gain past centre inside the loop still opens it into a bounded bloom).
 
 import { MODULES, BLOCK, HOST_ID, jackMap, utilGainDb } from '../spec.js';
 import { processOrder, loopModules, loopComponents, neededModules } from '../graph.js';
 import { MasterChain } from './master.js';
 import { createSource, InputConditioner, SOURCE_NAMES } from './sources.js';
 import { MODULE_CLASSES } from './modules/index.js';
-import { softLimit, sat, smoothCoef, HALF_PI, clamp, Biquad, DCBlocker, dbToGain } from './util.js';
+import { softLimit, sat, smoothCoef, HALF_PI, clamp, Biquad, dbToGain } from './util.js';
+import { LoopEcology } from './ecology.js';
+
+const STRIKE = 0.3; // the one-sample impulse placed on each From Host output that is not Off
 
 const CABLE_FADE_S = 0.012;
 const SOURCE_FADE_S = 0.015;
@@ -116,6 +120,13 @@ export class Engine {
     this.inRel = smoothCoef(0.4, sr / BLOCK);
     this.inHold = Math.round((0.8 * sr) / BLOCK); // bridges gaps between notes
     this.fbCoef = smoothCoef(0.1, sr / BLOCK);
+    this.ecology = new LoopEcology(sr, BLOCK);
+    this.strikeQueued = false;
+  }
+
+  // One one-sample impulse into every From Host output and every loop.
+  strike() {
+    this.strikeQueued = true;
   }
 
   // ------------------------------------------------------------------ control
@@ -129,6 +140,7 @@ export class Engine {
     else if (key === 'volume') this.master.setVolume(+value);
     else if (key === 'shrill') this.master.setShrillGuard(+value);
     else if (key === 'bpm') this.setBpm(value);
+    else if (key === 'life' || key === 'breath' || key === 'unrest') this.ecology.set(key, value);
   }
 
   setParam(moduleId, paramId, value) {
@@ -165,6 +177,9 @@ export class Engine {
     }
     c.pow = 0;
     c.lg = c.lgPrev = 1;
+    c.kick = 0;
+    c.gDb = 0;
+    if (c.unrest) this.ecology.calm(c.unrest);
   }
 
   // cables: [{ id, from: { m, j }, to: { m, j } }]
@@ -202,8 +217,8 @@ export class Engine {
       const audio = jackMap(c.from.m)[c.from.j].type === 'audio';
       const cab = {
         id, from: c.from, to: c.to, src, srcJack: c.from.j, dst, dstJack: c.to.j, g: 0, target: 1, back: false,
-        track: false, pow: 0, lg: 1, lgPrev: 1, hold: 0,
-        cond: audio ? { lp: new Biquad(this.sr).lowpass(6000, 0.7071), dc: new DCBlocker(this.sr, 10) } : null,
+        track: false, pow: 0, lg: 1, lgPrev: 1, hold: 0, ceil: 1.5,
+        cond: audio ? { lp: new Biquad(this.sr).lowpass(6000, 0.7071), dc: new Biquad(this.sr).highpass(80, 0.7071) } : null,
       };
       this.cables.set(id, cab);
       dst.inCables[c.to.j].push(cab);
@@ -231,8 +246,10 @@ export class Engine {
       for (const c of entries) c.track = true;
       for (const c of backs) c.track = true;
       const utils = members.filter((id) => id === 'merger' || id === 'splitter').map((id) => this.modules.get(id));
-      return { entries, backs, utils };
+      return { members, entries, backs, utils };
     });
+    // a cable that closes a new loop seeds it with a single impulse
+    for (const L of this.ecology.sync(this.loopsInfo)) this.ecology.kick(L);
     for (const m of this.moduleList) {
       m.inLoop = loops.has(m.id);
       const act = needed.has(m.id);
@@ -282,6 +299,11 @@ export class Engine {
           else c.pow += (p - c.pow) * this.inRel;
           if (!(c.pow < 1e6)) c.pow = 0;
         }
+        if (c.kick) {
+          // the seed impulse bypasses the cable fade so it is never lost
+          buf[0] += c.kick;
+          c.kick = 0;
+        }
         if (c.g === 1 && c.target === 1) {
           for (let n = 0; n < BLOCK; n++) buf[n] += s[n];
         } else {
@@ -315,8 +337,12 @@ export class Engine {
     if (c.cond) {
       const { lp, dc } = c.cond;
       const g0 = c.lgPrev, dg = (c.lg - c.lgPrev) / BLOCK;
-      for (let n = 0; n < BLOCK; n++) t[n] = 1.5 * sat(dc.process(lp.process(s[n] * (g0 + dg * n))) / 1.5);
+      // gain -> soft amplitude ceiling (set per loop by the ecology) -> cable
+      // loss, so the filters also smooth whatever the ceiling adds
+      const k = c.ceil;
+      for (let n = 0; n < BLOCK; n++) t[n] = dc.process(lp.process(k * sat((s[n] * (g0 + dg * n)) / k)));
       c.lgPrev = c.lg;
+      if (c.unrest) this.ecology.restless(c, t, BLOCK);
       const z = t[BLOCK - 1];
       if (z !== z) {
         // a NaN reached the cable filters: clear them rather than let it stick
@@ -346,6 +372,7 @@ export class Engine {
       for (const c of L.backs) {
         if (c.pow > allowed || !fed) c.lg = Math.max(1e-3, c.lg * this.govDown);
         else if (c.lg < 1) c.lg = Math.min(1, c.lg * this.govUp);
+        else if (c.lg > 1) c.lg = Math.max(1, c.lg * this.govDown); // leaving Life: settle back to unity
       }
     }
   }
@@ -383,8 +410,16 @@ export class Engine {
         host.gain = g;
       }
       host.cond.process(L, R, BLOCK, host.name === 'input');
+      if (this.strikeQueued && host.name !== 'off') {
+        L[0] += STRIKE;
+        R[0] += STRIKE;
+      }
       this.host.cur[`from${h + 1}L`].set(L);
       this.host.cur[`from${h + 1}R`].set(R);
+    }
+    if (this.strikeQueued) {
+      this.strikeQueued = false;
+      for (const Lp of this.loopsInfo) this.ecology.kick(Lp);
     }
   }
 
@@ -435,7 +470,7 @@ export class Engine {
       m.processed = true;
     }
     this.route(this.host);
-    this.governLoops();
+    this.ecology.update(this.loopsInfo, () => this.governLoops());
 
     // global wet/dry against the summed host inputs, then bypass
     const dL = this.dryL, dR = this.dryR;
@@ -494,6 +529,7 @@ export class Engine {
       loops,
       leds,
       faults: this.faults + this.master.faults,
+      ecology: this.loopsInfo.filter((L) => L.s && L.backs.length).map((L) => ({ m: L.members, e: L.s.eDb, g: L.s.gDb, dip: L.s.dip })),
       beat: this.beat,
       active: this.moduleList.filter((m) => m.active).map((m) => m.id),
     };

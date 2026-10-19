@@ -1,8 +1,9 @@
 // End-to-end check in a real browser (Chromium via Playwright).
 //   npm run build && npm run test:e2e
-// Loads the single-file build, starts audio, patches and rolls dice, then
-// analyses the live AudioWorklet output with an AnalyserNode: it must stay
-// below the -1 dBFS ceiling, carry signal, and keep the top octave quiet.
+// Loads the single-file build with no input at all, strikes it, rolls dice and
+// analyses the live AudioWorklet output with an AnalyserNode: one impulse must
+// be enough to keep the loops alive, the output must stay below the -1 dBFS
+// ceiling and keep the top octave quiet, and Panic / Life 0 must fall silent.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -48,7 +49,12 @@ page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
 await page.goto(pathToFileURL(file).href, { waitUntil: 'load' });
 await page.evaluate(() => localStorage.clear());
 await page.reload({ waitUntil: 'load' });
-await page.click('#power');
+const strip = await page.evaluate(() => {
+  const s = document.querySelector('.strip');
+  return { fits: s.scrollWidth <= s.clientWidth + 1, strike: !!document.querySelector('.strike'), knobs: document.querySelectorAll('.strip .gknob').length };
+});
+// Strike starts audio by itself, then sends the one impulse
+await page.click('.strike');
 await page.waitForFunction(() => window.patchArcade.audio.running, null, { timeout: 10000 });
 
 // tap the output with an analyser
@@ -94,23 +100,41 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  (${detail})` : ''}`);
 };
 
+check('device strip fits: Strike and six condition/global knobs', strip.fits && strip.strike && strip.knobs === 6, JSON.stringify(strip));
+const sources = await page.evaluate(() => [0, 1, 2].map((i) => document.querySelector(`#src${i}`).value));
+check('every input defaults to Impulse only', sources.every((s) => s === 'impulse'), sources.join(','));
+
 await page.waitForTimeout(1500);
 let m = await measure(3);
-check('default patch makes sound', m.rmsDb > -50, `rms ${m.rmsDb.toFixed(1)} dBFS`);
-check('default patch under ceiling', m.peak <= 0.892, `peak ${m.peak.toFixed(3)}`);
+check('one Strike makes sound with no input', m.rmsDb > -50, `rms ${m.rmsDb.toFixed(1)} dBFS`);
+check('first patch under ceiling', m.peak <= 0.892, `peak ${m.peak.toFixed(3)}`);
+await page.waitForTimeout(15000);
+m = await measure(3);
+check('still alive 20 s later on that one impulse', m.rmsDb > -50, `rms ${m.rmsDb.toFixed(1)} dBFS`);
+check('the living loop keeps the top end calm', m.hf12Db < -24, `>12 kHz ${m.hf12Db.toFixed(1)} dB`);
+
+await page.click('#panic');
+await page.waitForTimeout(1500);
+m = await measure(2);
+check('Panic silences the loops', m.rmsDb < -90, `rms ${m.rmsDb.toFixed(1)} dBFS`);
+await page.click('.strike');
+await page.waitForTimeout(4000);
+m = await measure(2);
+check('a new Strike brings them back', m.rmsDb > -50, `rms ${m.rmsDb.toFixed(1)} dBFS`);
 
 for (const h of [1, 2, 3]) await page.click(`.die${h}`);
-await page.waitForTimeout(6000);
+await page.waitForTimeout(8000);
 m = await measure(5);
+check('three no-input dice routes are alive', m.rmsDb > -50, `rms ${m.rmsDb.toFixed(1)} dBFS`);
 check('three dice routes under ceiling', m.peak <= 0.892, `peak ${m.peak.toFixed(3)}`);
 check('three dice routes keep the top end calm', m.hf12Db < -24, `>12 kHz ${m.hf12Db.toFixed(1)} dB`);
 
-// switch every source off: tails may ring out, then the rack must fall
-// completely silent (no hiss, no self-sustaining loop)
-for (let i = 0; i < 3; i++) await page.selectOption(`#src${i}`, 'off');
+// Life 0: nothing holds the loops any more, so the rack must fall completely
+// silent (no hiss, no self-sustaining loop)
+await page.evaluate(() => window.patchArcade.model.setGlobal('life', 0));
 await page.waitForTimeout(18000);
 m = await measure(2);
-check('silent 18 s after the sources stop', m.rmsDb < -90, `rms ${m.rmsDb.toFixed(1)} dBFS`);
+check('silent 18 s after Life goes to 0', m.rmsDb < -90, `rms ${m.rmsDb.toFixed(1)} dBFS`);
 
 await page.screenshot({ path: path.join(outDir, 'rack.png'), fullPage: true });
 check('no console errors', problems.length === 0, problems.join(' | '));

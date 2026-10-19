@@ -1,15 +1,19 @@
 // Web Audio host: creates the AudioContext and the rack's AudioWorkletNode and
-// feeds the three From Host inputs (demo instruments, microphone/line, files).
+// feeds the three From Host inputs. The instrument needs no input at all: by
+// default each From Host carries only the one-sample impulse sent by Strike.
+// Demo instruments, a microphone/line input or a file are optional extras for
+// using the rack as an effect.
 
 export const HOST_SOURCES = [
+  { id: 'impulse', label: 'Impulse only' },
   { id: 'off', label: 'Off' },
-  { id: 'keys', label: 'Demo · Keys' },
-  { id: 'pad', label: 'Demo · Pad' },
-  { id: 'beat', label: 'Demo · Beat' },
-  { id: 'bass', label: 'Demo · Bass' },
-  { id: 'arp', label: 'Demo · Arp' },
-  { id: 'mic', label: 'Mic / Line in' },
-  { id: 'file', label: 'Audio file…' },
+  { id: 'keys', label: 'Keys', group: 'Demo input' },
+  { id: 'pad', label: 'Pad', group: 'Demo input' },
+  { id: 'beat', label: 'Beat', group: 'Demo input' },
+  { id: 'bass', label: 'Bass', group: 'Demo input' },
+  { id: 'arp', label: 'Arp', group: 'Demo input' },
+  { id: 'mic', label: 'Mic / Line in', group: 'External input' },
+  { id: 'file', label: 'Audio file…', group: 'External input' },
 ];
 
 // Where to load the engine from. The single-file build embeds the worklet
@@ -143,7 +147,7 @@ export class AudioHost {
     else kill();
   }
 
-  // kind: demo name | 'off' | 'mic' | 'file' (with `file`). A newer call for
+  // kind: 'impulse' | demo name | 'off' | 'mic' | 'file' (with `file`). A newer call for
   // the same input supersedes an older one still waiting on a permission
   // prompt or a file decode.
   async setSource(h, kind, file) {

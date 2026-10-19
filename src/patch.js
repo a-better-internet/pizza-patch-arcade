@@ -169,7 +169,11 @@ export class PatchModel {
 
   // Build a random chain for one From Host route. Never touches hand-patched
   // cables or another route's audio. Returns the modules used (or null).
-  rollRoute(route, rng = new Rng((Math.random() * 2 ** 31) | 0)) {
+  // With `seed` (the route carries only the Strike impulse) the chain is always
+  // closed into a loop, since nothing else would ever make a sound, and the Fdbk
+  // knob instead sets the chance of extra tangle: a second loop and the chain
+  // listening to itself through its own CV outputs.
+  rollRoute(route, rng = new Rng((Math.random() * 2 ** 31) | 0), { seed = false } = {}) {
     this.clearRoute(route, true);
     const busy = this.busyModules(route);
     const pool = DICE_EFFECTS.filter(([id]) => !busy.has(id));
@@ -203,8 +207,32 @@ export class PatchModel {
     const owned = this.cables.some((c) => c.to.m === 'mixer' && (c.to.j === chIn || c.to.j === `ch${route}R`) && !(c.origin === ORIGIN_DICE && c.route === route));
     this.connect(src, owned ? { m: HOST_ID, j: 'toL' } : { m: 'mixer', j: chIn }, opts);
 
-    // a chance of a stereo feedback loop: a later module back into an earlier In 2
-    if (picks.length >= 2 && rng.next() < this.globals.fdbkChance) {
+    if (seed) {
+      // no input: the last module feeds back into an earlier one (or itself)
+      const last = picks.length - 1;
+      const i = rng.int(picks.length);
+      this.connect({ m: picks[last], j: 'out2L' }, { m: picks[i], j: 'in2L' }, opts);
+      // Dust Engine is the one module that adds its own noise: keep it a patina
+      if (picks.includes('dust')) {
+        this.setParam('dust', 'dust', Math.min(this.params.dust.dust, 0.2), true);
+        this.setParam('dust', 'wear', Math.min(this.params.dust.wear, 0.15), true);
+      }
+      if (rng.next() < this.globals.fdbkChance) {
+        // tangle: a second, inner loop and a module listening to the chain
+        if (picks.length >= 3) {
+          const k = 1 + rng.int(last - 1);
+          if (k - 1 !== i) this.connect({ m: picks[k], j: 'out2L' }, { m: picks[k - 1], j: 'in2L' }, opts);
+        }
+        const listeners = picks.filter((id) => MODULE_BY_ID[id].cvOuts.length);
+        const from = listeners.length ? listeners[rng.int(listeners.length)] : 'tamer';
+        const outs = MODULE_BY_ID[from].cvOuts;
+        const fx = picks[rng.int(picks.length)];
+        const targets = MODULE_BY_ID[fx].params.filter((p) => p.cv);
+        const tp = targets[rng.int(targets.length)];
+        this.connect({ m: from, j: `cvout:${outs[rng.int(outs.length)].id}` }, { m: fx, j: `cv:${tp.id}` }, opts);
+      }
+    } else if (picks.length >= 2 && rng.next() < this.globals.fdbkChance) {
+      // a chance of a stereo feedback loop: a later module back into an earlier In 2
       const j = 1 + rng.int(picks.length - 1);
       const i = rng.int(j);
       this.connect({ m: picks[j], j: 'out2L' }, { m: picks[i], j: 'in2L' }, opts);

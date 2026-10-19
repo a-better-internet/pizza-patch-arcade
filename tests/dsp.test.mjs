@@ -142,10 +142,11 @@ test('no hiss: with nothing playing the rack goes fully silent', () => {
   assert.ok(lvl < -100, `idle output should be silent, got ${lvl.toFixed(1)} dBFS`);
 });
 
-test('feedback loops never sustain themselves: dice patches fade to silence', () => {
+test('at Life 0 feedback loops never sustain themselves: dice patches fade to silence', () => {
   for (let seed = 1; seed <= 8; seed++) {
     const model = new PatchModel();
     model.setGlobal('fdbkChance', 1);
+    model.setGlobal('life', 0);
     const rng = new Rng(seed * 13 + 5);
     for (const r of [1, 2, 3]) model.rollRoute(r, rng);
     const e = makeEngine();
@@ -165,6 +166,7 @@ test('feedback loops never sustain themselves: dice patches fade to silence', ()
 
 test('a loop throttled open past centre may bloom, but stays bounded', () => {
   const e = makeEngine();
+  e.setGlobal('life', 0);
   e.setSource(0, 'keys');
   e.setPatch([
     ...stereo('a', 'host', 'from1', 'echoforge', 'in1'),

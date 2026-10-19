@@ -80,9 +80,16 @@ export function buildRack(root, model, handlers) {
   save.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3h11l3 3v11H3z M6 3v5h7V3 M6 17v-5h8v5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
   save.addEventListener('click', () => handlers.onSaveFile());
 
-  el('div', 'logo', strip, 'Patch Arcade');
+  el('div', 'logo', strip).innerHTML = 'Patch<br>Arcade';
 
   const io = el('div', 'strip-io', strip);
+  // the instrument's only energy: one sample, once
+  const strike = el('button', 'strike', io);
+  strike.type = 'button';
+  strike.title = 'Strike: one single-sample impulse into every From Host output and every feedback loop';
+  strike.innerHTML = '<span class="s-ring" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 16h8V3.5h2V16h8"/></svg></span><span class="s-txt">Strike</span>';
+  strike.addEventListener('click', () => handlers.onStrike(strike));
+  ui.strike = strike;
   const hostSpec = { id: HOST_ID, kind: 'host', params: [], buttons: [], cvOuts: [] };
   const hostJacks = Object.fromEntries(jacksFor(hostSpec).map((j) => [j.id, j]));
   const fh = el('div', 'from-host', io);
@@ -120,7 +127,7 @@ export function buildRack(root, model, handlers) {
   for (const g of GLOBAL_PARAMS) {
     const cell = el('div', `gknob g-${g.theme}`, gk);
     const k = new Knob({
-      label: g.label, title: g.id === 'fdbkChance' ? 'Feedback chance' : g.id === 'cables' ? 'Cable visibility' : 'Global wet/dry',
+      label: g.label, title: g.title || (g.id === 'fdbkChance' ? 'Feedback chance' : g.id === 'cables' ? 'Cable visibility' : 'Global wet/dry'),
       def: g.def, value: model.globals[g.id], size: 26, style: `cap-${g.theme}`, fmt: g.fmt,
       onChange: (v) => handlers.onGlobal(g.id, v),
     });

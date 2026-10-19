@@ -39,14 +39,17 @@ export class DustEngine extends Effect {
   reset() {
     for (const p of this.pink) p.fill(0);
     for (const f of this.noiseLp) f.reset();
+    for (const f of this.noiseHp) f.reset();
     for (const f of this.busLp) f.reset();
     for (const f of this.popLp) f.reset();
     for (const f of this.tick) f.reset();
     for (const f of this.thump) f.reset();
     for (const d of this.warp) d.clear();
     for (const f of this.oxLp) f.reset();
+    this.hold[0] = this.hold[1] = 0;
     this.inEnv.reset();
     this.gate = 0;
+    this.silent = 10; // stay closed until signal arrives (no noise out of a reset)
     this.compEnv = 0;
     this.compG = 1;
   }
@@ -71,8 +74,9 @@ export class DustEngine extends Effect {
     const popRate = p.dust * p.dust * 14 + L * 2;
     const ox = clamp(p.oxidize + L * 0.25, 0, 1);
     const decim = ox > 0.001 ? expMap(ox, 1, 0.09) : 1;
-    // each trip around a loop costs bit depth
-    const bits = clamp(16 - p.bit * 13 - L * 5, 2.5, 16);
+    // each trip around a loop costs bit depth, but at most 2 bits: in a quiet
+    // self-sustaining loop, deeper undithered quantisation becomes a hiss floor
+    const bits = clamp(16 - p.bit * 13 - L * 2, 2.5, 16);
     const q = Math.pow(2, bits - 1);
     const quantise = bits < 15.9;
     // fidelity low-pass after decimation / quantisation: keeps the grit, drops the fizz

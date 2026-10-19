@@ -64,6 +64,8 @@ export class StaticBloom extends Effect {
     this.slow.reset();
     for (const o of this.os) o.reset();
     this.rev.clear();
+    for (const f of this.preLp) f.reset();
+    for (const f of this.wetLp) f.reset();
     this.lazy = 0;
   }
 

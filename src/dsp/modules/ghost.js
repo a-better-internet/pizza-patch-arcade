@@ -66,8 +66,11 @@ export class SpectralGhost extends Effect {
     for (const ch of this.blur) for (const a of ch) a.clear();
     for (const f of this.lp) f.reset();
     for (const f of this.hp) f.reset();
+    for (const f of this.dc) f.reset();
     this.tank.clear();
     for (const s of this.shift) s.clear();
+    for (const f of this.shLp) f.reset();
+    for (const f of this.shHp) f.reset();
     this.shFb[0] = this.shFb[1] = 0;
   }
 
@@ -121,7 +124,9 @@ export class SpectralGhost extends Effect {
       if (this.driftPh >= 1) this.driftPh -= 1;
       const mod = driftDepth * (1 + 0.6 * this.drift + 0.4 * Math.sin(TAU * this.driftPh));
       for (let c = 0; c < 2; c++) {
-        this.time[c] += (tgt[c] - this.time[c]) * this.glide;
+        // slew-limited glide: a jumpy Time CV bends the pitch by a few semitones
+        // at most; in a loop, faster sweeps would scatter the tail into noise
+        this.time[c] += clamp((tgt[c] - this.time[c]) * this.glide, -0.25, 0.25);
         let r = this.dl[c].tapHermite(this.time[c] + mod + 2);
         const bl = this.blur[c];
         for (let k = 0; k < bl.length; k++) r = bl[k].process(r, g * (1 - 0.08 * k));

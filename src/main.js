@@ -10,7 +10,8 @@ import { CableLayer } from './ui/cables.js';
 import { RACK_W } from './ui/layouts.js';
 import { AudioHost, HOST_SOURCES } from './audio/host.js';
 
-const STORE_KEY = 'patch-arcade:v1';
+// v2: the no-input instrument (a v1 autosave is left untouched, not migrated)
+const STORE_KEY = 'patch-arcade:v2';
 const $ = (sel, root = document) => root.querySelector(sel);
 
 // ------------------------------------------------------------- persistence
@@ -34,7 +35,8 @@ const settings = {
   bpm: 120,
   volume: 0.8,
   shrill: 0.6,
-  sources: ['keys', 'off', 'off'],
+  // no generator: each From Host carries only the impulse sent by Strike
+  sources: ['impulse', 'impulse', 'impulse'],
   trims: [0, 0, 0],
   zoom: 'fit',
   presetIndex: 0,
@@ -55,10 +57,10 @@ if (stored && stored.patch) {
     settings.trims = [0, 1, 2].map((i) => num(st.trims && st.trims[i], -24, 12, 0));
     settings.zoom = st.zoom === 'fit' ? 'fit' : num(st.zoom, 0.4, 1.6, 'fit');
     settings.presetIndex = Math.round(num(st.presetIndex, 0, PRESETS.length - 1, 0));
-    // external sources need a fresh user gesture; fall back to a demo
+    // external sources need a fresh user gesture; fall back to the impulse
     settings.sources = [0, 1, 2].map((i) => {
       const s = st.sources && st.sources[i];
-      if (!ids.includes(s) || s === 'mic' || s === 'file') return i === 0 ? 'keys' : 'off';
+      if (!ids.includes(s) || s === 'mic' || s === 'file') return 'impulse';
       return s;
     });
     restored = true;
@@ -93,11 +95,28 @@ const audio = new AudioHost({
 });
 let lastTelemetry = null;
 
+const ECOLOGY = ['life', 'breath', 'unrest'];
+
+// The instrument's only energy: one sample into every From Host output and
+// every loop. Starts audio first if needed.
+async function strike() {
+  if (!audio.running) await power();
+  if (!audio.running) return;
+  audio.send({ type: 'strike' });
+  const s = ui && ui.strike;
+  if (s) {
+    s.classList.remove('struck');
+    void s.offsetWidth;
+    s.classList.add('struck');
+  }
+}
+
 function syncEngine() {
   if (!audio.node) return;
   audio.send({ type: 'patch', cables: model.cables });
   audio.send({ type: 'params', values: model.params });
   for (const m in model.buttons) for (const b in model.buttons[m]) audio.send({ type: 'button', m, b, v: model.buttons[m][b] });
+  for (const key of ECOLOGY) audio.send({ type: 'global', key, value: model.globals[key] });
   audio.send({ type: 'global', key: 'mix', value: model.globals.mix });
   audio.send({ type: 'global', key: 'bpm', value: settings.bpm });
   audio.send({ type: 'global', key: 'volume', value: settings.volume });
@@ -139,6 +158,7 @@ async function power() {
         else hostSelects[h].value = 'off';
       }
       $('#sr').textContent = `${(audio.ctx.sampleRate / 1000).toFixed(1)} kHz`;
+      audio.send({ type: 'strike' });
     }
   } catch (e) {
     toast(e && e.message ? e.message : String(e), 'error');
@@ -167,6 +187,7 @@ const handlers = {
   onButton: (m, b, v) => model.setButton(m, b, v),
   onMomentary: (m, b, v) => audio.send({ type: 'button', m, b, v }),
   onGlobal: (k, v) => model.setGlobal(k, v),
+  onStrike: () => strike(),
   onBypass: () => {
     bypassed = !bypassed;
     ui.bypass.classList.toggle('bypassed', bypassed);
@@ -175,7 +196,8 @@ const handlers = {
     audio.send({ type: 'global', key: 'bypass', value: bypassed });
   },
   onRoll: (h, die) => {
-    const used = model.rollRoute(h, new Rng((Math.random() * 2 ** 31) | 0));
+    const src = settings.sources[h - 1];
+    const used = model.rollRoute(h, new Rng((Math.random() * 2 ** 31) | 0), { seed: src === 'impulse' || src === 'off' });
     die.classList.remove('rolling');
     void die.offsetWidth;
     die.classList.add('rolling');
@@ -184,11 +206,11 @@ const handlers = {
       model.name = `Roll ${h}: ${used.map((id) => MODULE_BY_ID[id].name).join(' › ')}`;
       for (const c of model.cables) if (c.origin === 'dice' && c.route === h && c.loop) cables.sparks(c);
       if (settings.sources[h - 1] === 'off') {
-        const pick = ['keys', 'beat', 'pad'][h - 1];
-        hostSelects[h - 1].value = pick;
-        applySource(h - 1, pick);
+        hostSelects[h - 1].value = 'impulse';
+        applySource(h - 1, 'impulse');
       }
       refreshLcd();
+      strike();
     }
   },
   onClearRoute: (h) => {
@@ -241,7 +263,8 @@ function loadPreset(p) {
     hostSelects[h].value = s;
     applySource(h, s);
   });
-  toast(`Loaded “${p.name}” · ${p.bpm || 120} BPM`);
+  toast(`Loaded “${p.name}”`);
+  if (audio.running) strike();
 }
 
 function refreshLcd() {
@@ -303,7 +326,7 @@ function openPresetMenu(anchor) {
       const name = document.createElement('b');
       name.textContent = p.name;
       const bpm = document.createElement('i');
-      bpm.textContent = `${p.bpm} bpm`;
+      bpm.textContent = p.sources.every((s) => s === 'impulse') ? 'no input' : `${p.bpm} bpm`;
       const d = document.createElement('span');
       d.textContent = p.desc;
       b.append(name, bpm, d);
@@ -404,7 +427,7 @@ model.on((type, d) => {
       }
       break;
     case 'global':
-      if (d.key === 'mix') audio.send({ type: 'global', key: 'mix', value: d.v });
+      if (d.key === 'mix' || ECOLOGY.includes(d.key)) audio.send({ type: 'global', key: d.key, value: d.v });
       if (d.key === 'cables') {
         cables.setOpacity(cableOpacity(d.v));
         ui.globals.cables.el.style.opacity = String(0.35 + 0.65 * d.v);
@@ -433,13 +456,23 @@ function buildHostBar() {
     wrap.innerHTML = `<label class="hin-label" for="src${h}">In ${h + 1}</label>`;
     const sel = document.createElement('select');
     sel.id = `src${h}`;
+    const groups = {};
     for (const s of HOST_SOURCES) {
       // published artifacts cannot open the microphone
       if (s.id === 'mic' && globalThis.__PA_ARTIFACT__) continue;
       const o = document.createElement('option');
       o.value = s.id;
       o.textContent = s.label;
-      sel.appendChild(o);
+      let parent = sel;
+      if (s.group) {
+        if (!groups[s.group]) {
+          groups[s.group] = document.createElement('optgroup');
+          groups[s.group].label = s.group;
+          sel.appendChild(groups[s.group]);
+        }
+        parent = groups[s.group];
+      }
+      parent.appendChild(o);
     }
     sel.value = settings.sources[h] === 'mic' || settings.sources[h] === 'file' ? 'off' : settings.sources[h];
     sel.addEventListener('change', () => {
@@ -603,6 +636,15 @@ function renderTelemetry() {
   if (!t || !ui) return;
   lastTelemetry = null;
   const active = new Set(t.active);
+  // living loops: each member panel glows with the energy circulating in its loop
+  const breath = {};
+  let alive = 0;
+  for (const L of t.ecology || []) {
+    const b = Math.max(0, Math.min(1, (L.e + 62) / 48));
+    alive = Math.max(alive, b);
+    for (const id of L.m) breath[id] = Math.max(breath[id] || 0, b);
+  }
+  if (ui.strike) ui.strike.style.setProperty('--alive', alive.toFixed(3));
   for (const spec of MODULES) {
     const vals = t.values[spec.id];
     spec.params.forEach((p, i) => {
@@ -613,6 +655,9 @@ function renderTelemetry() {
     const panel = ui.panels[spec.id];
     panel.style.setProperty('--loop', loop.toFixed(3));
     panel.classList.toggle('looping', loop > 0.01);
+    const b = breath[spec.id] || 0;
+    panel.style.setProperty('--breath', b.toFixed(3));
+    panel.classList.toggle('breathing', b > 0.02);
     panel.classList.toggle('idle', !active.has(spec.id));
   }
   // mixer meters

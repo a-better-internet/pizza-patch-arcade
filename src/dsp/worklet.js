@@ -46,6 +46,9 @@ class PatchArcadeProcessor extends AudioWorkletProcessor {
         case 'panic':
           eng.panic();
           break;
+        case 'strike':
+          eng.strike();
+          break;
         default:
           break;
       }

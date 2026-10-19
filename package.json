@@ -1,7 +1,7 @@
 {
   "name": "patch-arcade",
   "version": "1.0.0",
-  "description": "Patch Arcade — a browser-based modular effects patchbay (eighteen modules, virtual cables, musical feedback).",
+  "description": "Patch Arcade — a tangled feedback instrument with no generator: one impulse, eighteen modules, loops that breathe.",
   "private": true,
   "type": "module",
   "scripts": {

@@ -6,9 +6,9 @@
 
 import { TAU, Rng, SVF, Biquad, DCBlocker, OnePole, flush, softLimit, dbToGain, smoothCoef, fastSin } from './util.js';
 
-export const SOURCE_NAMES = ['off', 'keys', 'pad', 'beat', 'bass', 'arp', 'input'];
+export const SOURCE_NAMES = ['off', 'impulse', 'keys', 'pad', 'beat', 'bass', 'arp', 'input'];
 export const SOURCE_LABELS = {
-  off: 'Off', keys: 'Demo: Keys', pad: 'Demo: Pad', beat: 'Demo: Beat', bass: 'Demo: Bass',
+  off: 'Off', impulse: 'Impulse only', keys: 'Demo: Keys', pad: 'Demo: Pad', beat: 'Demo: Beat', bass: 'Demo: Bass',
   arp: 'Demo: Arp', input: 'External input',
 };
 
